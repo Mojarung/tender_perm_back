@@ -27,43 +27,62 @@ The database models must strictly map to the provided JSON dataset structures wh
 **Table: `ste_catalog` (Maps to the `cte.json` dataset)**
 
 * `id`: `UUID` (Primary Key, default: `uuid4`)
-* `ste_id`: `String` (Indexed. Maps to *«Идентификатор СТЕ»*, e.g., "34863000")
+* `ste_id`: `Integer` (Indexed. Maps to *«Идентификатор СТЕ»*, e.g., `34863000`)
 * `name`: `String` (Maps to *«Наименование СТЕ»*)
 * `category`: `String` (Maps to *«Категория»*)
 * `manufacturer`: `String` (Maps to *«Производитель»*)
-* `raw_characteristics`: `Text` (Raw array format from JSON)
+* `raw_characteristics`: `Text` (Raw array format from JSON, maps to *«характеристики СТЕ»*)
 * `parsed_characteristics`: `JSONB` (Populated asynchronously via ML Worker's SLM parsing, transforming arrays into standard Key-Value pairs)
-* `embedding`: `Vector(384)` (Generated via ML Worker's `ru-e5-small` model. Requires `HNSW` index with `vector_cosine_ops` for fast similarity search).
+* `embedding`: `Vector(384)` (Generated via ML Worker's `ai-forever/ru-e5-small` model. Requires `HNSW` index with `vector_cosine_ops` for fast similarity search).
 
 **Table: `contracts` (Maps to the `contracts.json` dataset)**
 
 * `id`: `UUID` (Primary Key, default: `uuid4`)
-* `contract_id`: `String` (Indexed. Maps to *«Идентификатор контракта»*)
-* `ste_id`: `String` (Foreign Key referencing `ste_catalog.ste_id`, Indexed. Maps to *«Идентификатор СТЕ по контракту»*)
+* `contract_id`: `Integer` (Indexed. Maps to *«Идентификатор контракта»*)
+* `ste_id`: `Integer` (Foreign Key referencing `ste_catalog.ste_id`, Indexed. Maps to *«Идентификатор СТЕ по контракту»*)
 * `purchase_name`: `String` (Maps to *«Наименование закупки»*)
+* `ste_position_name`: `String` (Maps to *«Наименование позиции СТЕ»*)
 * `quantity`: `Numeric` (Maps to *«Количество»*)
+* `unit`: `String` (Maps to *«Единица измерения»*)
 * `price_per_unit`: `Numeric` (Maps to *«Цена за единицу»*. **Crucial field for NMCC math**).
+* `purchase_method`: `String` (Maps to *«Способ закупки»*)
+* `initial_contract_cost`: `Numeric` (Maps to *«Начальная стоимость контракта»*)
+* `final_contract_cost`: `Numeric` (Maps to *«Стоимость контракта после заключения»*)
+* `discount_percent`: `Numeric` (Maps to *«% снижения»*)
 * `contract_date`: `DateTime` (Maps to *«Дата заключения контракта»*. Indexed for fast time-decay filtering).
+* `customer_inn`: `String` (Maps to *«ИНН заказчика»*)
 * `customer_region`: `String` (Maps to *«Регион заказчика»*)
+* `supplier_inn`: `String` (Maps to *«ИНН поставщика»*)
 * `supplier_region`: `String` (Maps to *«Регион поставщика»*)
 * `vat_rate`: `String` (Maps to *«Ставка НДС»*)
 
-### 2.3. Public API Specification (Exposed to UI)
+### 2.3. Data Ingestion Pipeline
+
+On first startup, the backend must ingest data from `cte.json` and `contracts.json`:
+
+1. Parse JSON files using `orjson` for speed.
+2. Bulk insert into PostgreSQL using SQLAlchemy `insert().values([...])`.
+3. After STE catalog is loaded, trigger async enrichment via ML Worker:
+   - For each STE item, call `/internal/ml/parse-characteristics` to populate `parsed_characteristics`.
+   - For each STE item, call `/internal/ml/embed` to populate `embedding`.
+4. Build HNSW index on `ste_catalog.embedding` after all embeddings are generated.
+
+### 2.4. Public API Specification (Exposed to UI)
 
 #### `GET /api/v1/ste/search`
 
 * **Description:** Hybrid semantic search for STE analogs with historical price fetching.
 * **Request Query Parameters:**
-* `query` (string, required): e.g., "Пакеты для мусора 35л"
-* `target_region` (string, optional): Used to calculate logistics confidence scores.
-* `months_depth` (int, default=12): Ignore contracts older than X months from the current date.
+  * `query` (string, required): e.g., "Пакеты для мусора 35л"
+  * `target_region` (string, optional): Used to calculate logistics confidence scores.
+  * `months_depth` (int, default=12): Ignore contracts older than X months from the current date.
 
 
 * **Execution Flow:**
-1. Send composite `query` to `ML Worker` (`/internal/ml/embed`) to get `[float]` vector.
-2. Execute async SQLAlchemy query using pgvector's `<=>` operator against `ste_catalog.embedding`, adding a boost for exact category matches.
-3. Apply `JOIN` on `contracts` table.
-4. Apply `WHERE contract_date >= current_date - months_depth`.
+  1. Send composite `query` to `ML Worker` (`/internal/ml/embed`) to get `[float]` vector.
+  2. Execute async SQLAlchemy query using pgvector's `<=>` operator against `ste_catalog.embedding`, adding a boost for exact category matches.
+  3. Apply `JOIN` on `contracts` table.
+  4. Apply `WHERE contract_date >= current_date - months_depth`.
 
 
 * **Response (`200 OK`):**
@@ -71,18 +90,17 @@ The database models must strictly map to the provided JSON dataset structures wh
 {
   "results": [
     {
-      "ste_id": "34863000",
+      "ste_id": 34863000,
       "name": "Мусорные пакеты 35л",
       "similarity_score": 0.92,
       "parsed_characteristics": {"Объем": 35.0, "Цвет": "черный"},
       "historical_prices": [
-        {"contract_id": "uuid", "date": "2025-10-01", "price": 120.50, "region": "Москва"},
-        {"contract_id": "uuid", "date": "2025-11-15", "price": 125.00, "region": "ЦФО"}
+        {"contract_id": 204746787, "date": "2025-10-01", "price": 120.50, "region": "Москва"},
+        {"contract_id": 204746788, "date": "2025-11-15", "price": 125.00, "region": "ЦФО"}
       ]
     }
   ]
 }
-
 ```
 
 
@@ -93,19 +111,18 @@ The database models must strictly map to the provided JSON dataset structures wh
 * **Request Body:**
 ```json
 {
-  "target_ste_id": "34863000",
+  "target_ste_id": 34863000,
   "target_region": "Москва",
   "selected_prices": [120.50, 125.00, 118.00, 5000.00, 122.00]
 }
-
 ```
 
 
 * **Execution Flow:**
-1. Send `selected_prices` to `ML Worker` (`/internal/ml/detect-outliers`).
-2. Receive `valid_prices` and `outliers`.
-3. Load `valid_prices` into a `polars.Series`.
-4. Calculate Variation Coefficient ($v$) and Average Price using strict Polars math.
+  1. Send `selected_prices` to `ML Worker` (`/internal/ml/detect-outliers`).
+  2. Receive `valid_prices` and `outliers`.
+  3. Load `valid_prices` into a `polars.Series`.
+  4. Calculate Variation Coefficient ($v$) and Average Price using strict Polars math.
 
 
 * **Response (`200 OK`):**
@@ -117,7 +134,6 @@ The database models must strictly map to the provided JSON dataset structures wh
   "detected_outliers": [5000.00],
   "requires_manual_input": false
 }
-
 ```
 
 
@@ -136,15 +152,15 @@ The database models must strictly map to the provided JSON dataset structures wh
 * **Runtime:** Python 3.12
 * **Web Framework:** FastAPI (Internal routing only, no public access).
 * **Semantic Search Model:** `ai-forever/ru-e5-small`
-* *Implementation strict rule:* Must be exported to `.onnx` format (INT8 quantization) and executed via `onnxruntime` on CPU. Do NOT use PyTorch `transformers` pipeline to save RAM/CPU. Dimension: `384`.
+  * *Implementation strict rule:* Must be exported to `.onnx` format (INT8 quantization) and executed via `onnxruntime` on CPU. Do NOT use PyTorch `transformers` pipeline to save RAM/CPU. Dimension: `384`.
 
 
-* **Data Normalization Model (SLM):** `GigaChat-Nano-GGUF` (Q4_K_M quantization).
-* *Implementation strict rule:* Executed via `llama-cpp-python`. Must utilize Llama.cpp's `grammar` parameter to force strictly structured JSON Schema output and prevent hallucinations.
+* **Data Normalization Model (SLM):** `Qwen/Qwen2.5-0.5B-Instruct-GGUF` (Q4_K_M quantization).
+  * *Implementation strict rule:* Executed via `llama-cpp-python`. Must utilize Llama.cpp's `grammar` parameter to force strictly structured JSON Schema output and prevent hallucinations.
 
 
 * **Anomaly Detection Model:** `sklearn.ensemble.IsolationForest`
-* *Implementation strict rule:* `contamination="auto"`.
+  * *Implementation strict rule:* `contamination="auto"`.
 
 
 
@@ -153,7 +169,7 @@ The database models must strictly map to the provided JSON dataset structures wh
 #### `POST /internal/ml/embed`
 
 * **Request:** `{"text": "[КАТЕГОРИЯ] Пакеты [НАЗВАНИЕ] Мусорные пакеты 35л [ХАРАКТЕРИСТИКИ] Цвет: черный"}`
-* **Execution Flow:** Tokenize text -> Run through ONNX runtime `ru-e5-small` -> perform mean pooling -> return L2-normalized vector.
+* **Execution Flow:** Tokenize text -> Run through ONNX runtime `ai-forever/ru-e5-small` -> perform mean pooling -> return L2-normalized vector.
 * **Response:** `{"embedding": [0.012, -0.055, 0.891, ...]} // length 384`
 
 #### `POST /internal/ml/parse-characteristics`
@@ -169,7 +185,6 @@ The database models must strictly map to the provided JSON dataset structures wh
     "Толщина": 50.0
   }
 }
-
 ```
 
 
@@ -178,17 +193,13 @@ The database models must strictly map to the provided JSON dataset structures wh
 
 * **Request:** `{"prices": [23760.0, 24000.0, 23500.0, 1500.0, 95000.0]}`
 * **Execution Flow:** Convert list to `numpy` array shape `(-1, 1)`. Run `IsolationForest().fit_predict()`. Values marked as `-1` are outliers.
-* **Response:** ```json
+* **Response:**
+```json
 {
-"valid_prices": [23760.0, 24000.0, 23500.0],
-"outliers": [1500.0, 95000.0]
+  "valid_prices": [23760.0, 24000.0, 23500.0],
+  "outliers": [1500.0, 95000.0]
 }
 ```
-
-
-```
-
-
 
 ---
 
@@ -197,8 +208,6 @@ The database models must strictly map to the provided JSON dataset structures wh
 The following Compose file orchestrates the entire system locally. The AI Agent must place this at the root of the project (above the two repositories).
 
 ```yaml
-version: '3.8'
-
 services:
   database:
     image: ankane/pgvector:latest
@@ -225,7 +234,13 @@ services:
     expose:
       - "8001"
     volumes:
-      - ./model_weights:/app/models # Maps local weights to avoid downloading inside container
+      - ./model_weights:/app/models
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
     command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8001", "--workers", "1"]
 
   backend:
@@ -237,17 +252,18 @@ services:
       database:
         condition: service_healthy
       ml_worker:
-        condition: service_started
+        condition: service_healthy
     ports:
       - "8000:8000"
     environment:
       - DATABASE_URL=postgresql+asyncpg://tender_user:tender_password@database:5432/tenderhack_db
       - ML_SERVICE_URL=http://ml_worker:8001
-    command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    volumes:
+      - ./data:/app/data
+    command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
 
 volumes:
   pgdata:
-
 ```
 
 ---

@@ -1,0 +1,17 @@
+[project]
+name = "tender-ml-worker"
+version = "1.0.0"
+description = "ML Worker — embeddings (ONNX), SLM parsing (GGUF), anomaly detection (sklearn)"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+    "pydantic>=2.0",
+    "onnxruntime>=1.19.0",
+    "tokenizers>=0.21.0",
+    "llama-cpp-python>=0.3.0",
+    "scikit-learn>=1.5.0",
+    "numpy>=1.26",
+    "huggingface-hub>=0.26.0",
+]
