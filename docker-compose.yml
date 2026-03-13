@@ -1,0 +1,50 @@
+version: '3.8'
+
+services:
+  database:
+    image: ankane/pgvector:latest
+    container_name: tender_pgvector
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-tender_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-tender_password}
+      POSTGRES_DB: ${POSTGRES_DB:-tenderhack_db}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tender_user -d tenderhack_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  ml_worker:
+    build: 
+      context: ./tender-ml-worker
+      dockerfile: Dockerfile
+    container_name: tender_ml_worker
+    expose:
+      - "8001"
+    volumes:
+      - ./model_weights:/app/models # Maps local weights to avoid downloading inside container
+    command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8001", "--workers", "1"]
+
+  backend:
+    build: 
+      context: ./tender-backend
+      dockerfile: Dockerfile
+    container_name: tender_backend
+    depends_on:
+      database:
+        condition: service_healthy
+      ml_worker:
+        condition: service_started
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-tender_user}:${POSTGRES_PASSWORD:-tender_password}@database:5432/${POSTGRES_DB:-tenderhack_db}
+      - ML_SERVICE_URL=http://ml_worker:8001
+    command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+
+volumes:
+  pgdata:

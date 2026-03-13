@@ -13,6 +13,7 @@ This system is designed as a modular, 100% offline-capable application split int
 
 * **Runtime:** Python 3.12
 * **Web Framework:** FastAPI + Pydantic v2
+* **State Machine & Agentic Workflow:** `langgraph` + `langchain_core` (To orchestrate the complex steps of NMCC calculation and Human-in-the-loop workflows).
 * **Database:** PostgreSQL 16+ with `pgvector` extension.
 * **ORM:** SQLAlchemy 2.0 (using `asyncpg` for asynchronous database operations).
 * **Data Processing:** `polars` (Strictly use Polars instead of Pandas for performance optimization during NMCC aggregation).
@@ -101,21 +102,23 @@ The database models must strictly map to the provided JSON dataset structures wh
 ```
 
 
-* **Execution Flow:**
-1. Send `selected_prices` to `ML Worker` (`/internal/ml/detect-outliers`).
-2. Receive `valid_prices` and `outliers`.
-3. Load `valid_prices` into a `polars.Series`.
-4. Calculate Variation Coefficient ($v$) and Average Price using strict Polars math.
+* **Execution Flow (Orchestrated by LangGraph State Machine):**
+1. **Node `ParseInput`**: Receive `target_ste_id` and initial parameters.
+2. **Node `FetchContracts`**: Use Polars to load relevant contracts from Database.
+3. **Node `DetectOutliers`**: Send `prices` to `ML Worker` (`/internal/ml/detect-outliers`). Receive `valid_prices` and `outliers`.
+4. **Node `HumanInTheLoop` (Interrupt State)**: Return state to UI. User visually reviews outliers, manually adds/edits prices, and confirms.
+5. **Node `CalculateMath`**: Load confirmed `valid_prices` into a `polars.Series`. Calculate Variation Coefficient ($v$) and Average Price using strict Polars math.
+6. **Node `ExplainableAI`**: Draft a human-readable string explaining the data changes (e.g., "Outlier at 5000.00 was removed, leaving 4 reliable prices...").
 
-
-* **Response (`200 OK`):**
+* **Response (`200 OK` - from HumanInTheLoop or Final State):**
 ```json
 {
   "nmck_value": 121.37,
   "variation_coefficient": 0.024,
   "valid_prices_used": [120.50, 125.00, 118.00, 122.00],
   "detected_outliers": [5000.00],
-  "requires_manual_input": false
+  "requires_manual_input": true,
+  "ai_explanation": "Из выборки исключена аномальная цена 5000.00, превышающая медиану."
 }
 
 ```
@@ -139,8 +142,8 @@ The database models must strictly map to the provided JSON dataset structures wh
 * *Implementation strict rule:* Must be exported to `.onnx` format (INT8 quantization) and executed via `onnxruntime` on CPU. Do NOT use PyTorch `transformers` pipeline to save RAM/CPU. Dimension: `384`.
 
 
-* **Data Normalization Model (SLM):** `GigaChat-Nano-GGUF` (Q4_K_M quantization).
-* *Implementation strict rule:* Executed via `llama-cpp-python`. Must utilize Llama.cpp's `grammar` parameter to force strictly structured JSON Schema output and prevent hallucinations.
+* **Data Normalization Model (SLM):** `Qwen3-8B-Instruct-GGUF` (Q4_K_M).
+* *Implementation strict rule:* Executed via `llama-cpp-python`. Must utilize Llama.cpp's `grammar` parameter to force strictly structured JSON Schema output and prevent hallucinations. (Chosen due to superior 2026 CPU performance and zero-shot table parsing capabilities).
 
 
 * **Anomaly Detection Model:** `sklearn.ensemble.IsolationForest`
