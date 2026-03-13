@@ -1,9 +1,8 @@
-from typing import TypedDict, List, Dict, Any
+from typing import TypedDict, List
 from langgraph.graph import StateGraph, END
 import httpx
 import os
 import polars as pl
-import json
 
 ML_SERVICE_URL = os.getenv("ML_SERVICE_URL", "http://tender_ml_worker:8001")
 
