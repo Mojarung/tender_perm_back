@@ -26,8 +26,6 @@ async def process_ste_batch(session: AsyncSession, batch: list):
         
         vector = await generate_embedding(text_for_embed)
         
-        # Simplified for Hackathon: Normally we would call /parse-characteristics here for JSONB
-        
         obj = SteCatalog(
             ste_id=str(item.get('Идентификатор СТЕ')),
             name=item.get('Наименование СТЕ', ''),

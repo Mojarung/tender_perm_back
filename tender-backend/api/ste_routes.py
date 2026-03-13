@@ -27,7 +27,6 @@ async def search_ste(
         query_vector = [0.0] * 384
 
     # 2. Vector Search using pgvector `<=>` operator
-    # Note: Real implementation might include Full-Text Search (BM25) as a hybrid re-ranker
     stmt = (
         select(SteCatalog, SteCatalog.embedding.cosine_distance(query_vector).label("distance"))
         .order_by("distance")
