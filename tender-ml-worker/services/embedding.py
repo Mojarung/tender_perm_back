@@ -3,11 +3,15 @@ import onnxruntime as ort
 from transformers import AutoTokenizer
 import os
 
-MODEL_DIR = "/app/models/ru-e5-small-onnx"
+MODEL_DIR = os.getenv("EMBEDDING_MODEL_DIR", "../model_weights/ru-e5-small-onnx")
 
 try:
-    tokenizer = AutoTokenizer.from_pretrained(MODEL_DIR)
-    session = ort.InferenceSession(os.path.join(MODEL_DIR, "model.onnx"))
+    if not os.path.exists(MODEL_DIR):
+        print(f"Warning: Embedding model directory not found at {MODEL_DIR}")
+        tokenizer, session = None, None
+    else:
+        tokenizer = AutoTokenizer.from_pretrained(MODEL_DIR)
+        session = ort.InferenceSession(os.path.join(MODEL_DIR, "model.onnx"))
 except Exception as e:
     print(f"Failed to load ONNX model: {e}")
     tokenizer, session = None, None

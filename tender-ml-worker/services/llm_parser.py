@@ -1,8 +1,16 @@
+import json
+import os
 from llama_cpp import Llama, LlamaGrammar
 
+MODEL_PATH = os.getenv("LLM_MODEL_PATH", "../model_weights/qwen-slm.gguf")
+
 try:
-    llm = Llama(model_path="/app/models/qwen-slm.gguf", n_ctx=2048, n_threads=4, verbose=False)
-    grammar_str = r'''root ::= "{" ws (string ws ":" ws value (ws "," ws string ws ":" ws value)*)? ws "}"
+    if not os.path.exists(MODEL_PATH):
+        print(f"Warning: LLM model file not found at {MODEL_PATH}")
+        llm, grammar = None, None
+    else:
+        llm = Llama(model_path=MODEL_PATH, n_ctx=2048, n_threads=4, verbose=False)
+        grammar_str = r'''root ::= "{" ws (string ws ":" ws value (ws "," ws string ws ":" ws value)*)? ws "}"
 value ::= string | number | boolean | null | array | object
 string ::= "\"" ([^"\\] | "\\" (["\\/bfnrt] | "u" [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F]))* "\""
 number ::= "-"? ("0" | [1-9] [0-9]*) ("." [0-9]+)? ([eE] [-+]? [0-9]+)?
@@ -11,7 +19,7 @@ null ::= "null"
 array ::= "[" ws (value (ws "," ws value)*)? ws "]"
 object ::= "{" ws (string ws ":" ws value (ws "," ws string ws ":" ws value)*)? ws "}"
 ws ::= ([ \t\n] ws)?'''
-    grammar = LlamaGrammar.from_string(grammar_str)
+        grammar = LlamaGrammar.from_string(grammar_str)
 except Exception as e:
     print(f"Failed to load GGUF model: {e}")
     llm, grammar = None, None
