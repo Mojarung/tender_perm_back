@@ -28,7 +28,6 @@ class Settings(BaseSettings):
     max_coefficient_of_variation: float = 33.0
 
     # Document
-    template_path: Path = Path("templates/nmck_template.docx")
     output_dir: Path = Path("output")
 
     # Server

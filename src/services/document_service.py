@@ -1,17 +1,129 @@
-"""Document generation service — creates .docx justification report."""
+"""Document generation service — creates .docx NMCK justification (Приказ №567)."""
 
 import logging
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from docxtpl import DocxTemplate
+from docx import Document
+from docx.enum.table import WD_TABLE_ALIGNMENT
+from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.oxml.ns import qn
+from docx.shared import Cm, Pt, RGBColor
+
+from src.services.num_to_words_ru import number_to_words_ru
 
 logger = logging.getLogger(__name__)
 
+_FONT_NAME = "Times New Roman"
+_FONT_SIZE = Pt(12)
+
+
+# ── Helpers ──────────────────────────────────────────────────────────────────
+
+
+def _format_price(value: float) -> str:
+    """Format price Russian-style: '1 234,56'."""
+    integer_part = int(value)
+    decimal_part = round((value - integer_part) * 100)
+    int_str = f"{integer_part:,}".replace(",", " ")
+    return f"{int_str},{decimal_part:02d}"
+
+
+def _format_date(val: Any) -> str:
+    """Convert datetime / string / None to 'DD.MM.YYYY'."""
+    if val is None:
+        return "—"
+    if isinstance(val, datetime):
+        return val.strftime("%d.%m.%Y")
+    s = str(val).strip()
+    if not s:
+        return "—"
+    # Already formatted
+    if len(s) == 10 and s[2] == "." and s[5] == ".":
+        return s
+    # ISO format
+    for fmt in ("%Y-%m-%d", "%Y-%m-%dT%H:%M:%S", "%d.%m.%Y"):
+        try:
+            return datetime.strptime(s[:10], fmt).strftime("%d.%m.%Y")
+        except ValueError:
+            continue
+    return s
+
+
+def _set_cell_shading(cell, color_hex: str) -> None:
+    """Set cell background colour via XML."""
+    shading = cell._element.get_or_add_tcPr()
+    shd = shading.makeelement(qn("w:shd"), {
+        qn("w:val"): "clear",
+        qn("w:color"): "auto",
+        qn("w:fill"): color_hex,
+    })
+    shading.append(shd)
+
+
+def _style_paragraph(paragraph, bold: bool = False, size: Pt = _FONT_SIZE,
+                     alignment=None, space_after: Pt | None = None) -> None:
+    """Apply common paragraph styling."""
+    if alignment is not None:
+        paragraph.alignment = alignment
+    fmt = paragraph.paragraph_format
+    if space_after is not None:
+        fmt.space_after = space_after
+    for run in paragraph.runs:
+        run.font.name = _FONT_NAME
+        run.font.size = size
+        run.bold = bold
+
+
+def _add_styled_paragraph(doc: Document, text: str, bold: bool = False,
+                          size: Pt = _FONT_SIZE,
+                          alignment=None,
+                          space_after: Pt | None = None):
+    """Add a paragraph with consistent styling."""
+    p = doc.add_paragraph()
+    run = p.add_run(text)
+    run.font.name = _FONT_NAME
+    run.font.size = size
+    run.bold = bold
+    if alignment is not None:
+        p.alignment = alignment
+    if space_after is not None:
+        p.paragraph_format.space_after = space_after
+    return p
+
+
+def _style_table(table, header_row: bool = True) -> None:
+    """Apply Table Grid + header shading."""
+    table.style = "Table Grid"
+    table.alignment = WD_TABLE_ALIGNMENT.CENTER
+    if header_row and table.rows:
+        for cell in table.rows[0].cells:
+            _set_cell_shading(cell, "D9D9D9")
+            for p in cell.paragraphs:
+                for run in p.runs:
+                    run.font.name = _FONT_NAME
+                    run.font.size = _FONT_SIZE
+                    run.bold = True
+
+
+def _set_cell_text(cell, text: str, bold: bool = False,
+                   alignment=None) -> None:
+    """Set cell text with styling."""
+    cell.text = ""
+    p = cell.paragraphs[0]
+    run = p.add_run(text)
+    run.font.name = _FONT_NAME
+    run.font.size = _FONT_SIZE
+    run.bold = bold
+    if alignment is not None:
+        p.alignment = alignment
+
+
+# ── Main Generator ───────────────────────────────────────────────────────────
+
 
 def generate_nmck_document(
-    template_path: Path,
     output_dir: Path,
     session_id: str,
     target_name: str,
@@ -20,179 +132,249 @@ def generate_nmck_document(
     outliers: list[dict[str, Any]],
     calculation: dict[str, Any],
     justification: list[dict[str, Any]],
+    quantity: float = 1.0,
+    region: str | None = None,
+    unit: str | None = None,
 ) -> str:
-    """
-    Generate a .docx justification document from the pipeline results.
-
-    Returns the path to the generated file.
-    """
+    """Generate .docx NMCK justification per Приказ №567 (Приложение 1)."""
+    output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     output_path = output_dir / f"nmck_justification_{session_id}.docx"
 
-    # If the template exists, use it; otherwise create a simple document
-    if template_path.exists():
-        doc = DocxTemplate(str(template_path))
-        context = _build_template_context(
-            session_id=session_id,
-            target_name=target_name,
-            analogs=analogs,
-            prices=prices,
-            outliers=outliers,
-            calculation=calculation,
-            justification=justification,
-        )
-        doc.render(context)
-        doc.save(str(output_path))
-    else:
-        logger.warning("Template not found at %s, creating basic document", template_path)
-        _create_basic_document(
-            output_path=output_path,
-            session_id=session_id,
-            target_name=target_name,
-            analogs=analogs,
-            prices=prices,
-            outliers=outliers,
-            calculation=calculation,
-            justification=justification,
-        )
-
-    logger.info("Document generated: %s", output_path)
-    return str(output_path)
-
-
-def _build_template_context(
-    session_id: str,
-    target_name: str,
-    analogs: list[dict[str, Any]],
-    prices: list[dict[str, Any]],
-    outliers: list[dict[str, Any]],
-    calculation: dict[str, Any],
-    justification: list[dict[str, Any]],
-) -> dict[str, Any]:
-    """Build context dict for docxtpl template rendering."""
-    return {
-        "session_id": session_id,
-        "date": datetime.now().strftime("%d.%m.%Y"),
-        "target_name": target_name,
-        "analogs": analogs,
-        "analogs_count": len(analogs),
-        "prices": prices,
-        "prices_count": len(prices),
-        "outliers": outliers,
-        "outliers_count": len(outliers),
-        "weighted_average": calculation.get("weighted_average_price", 0),
-        "median": calculation.get("median_price", 0),
-        "cv": calculation.get("coefficient_of_variation", 0),
-        "is_homogeneous": calculation.get("is_homogeneous", True),
-        "nmck_per_unit": calculation.get("nmck_per_unit", 0),
-        "total_nmck": calculation.get("total_nmck", 0),
-        "price_range_min": calculation.get("price_range_min", 0),
-        "price_range_max": calculation.get("price_range_max", 0),
-        "num_prices_used": calculation.get("num_prices_used", 0),
-        "justification": justification,
-    }
-
-
-def _create_basic_document(
-    output_path: Path,
-    session_id: str,
-    target_name: str,
-    analogs: list[dict[str, Any]],
-    prices: list[dict[str, Any]],
-    outliers: list[dict[str, Any]],
-    calculation: dict[str, Any],
-    justification: list[dict[str, Any]],
-) -> None:
-    """Create a basic .docx document without a template using python-docx."""
-    from docx import Document
-    from docx.shared import Pt
-
     doc = Document()
 
-    # Title
-    title = doc.add_heading("Обоснование начальной (максимальной) цены контракта", level=0)
+    # ── Page margins: left 3cm, right 1.5cm, top 2cm, bottom 2cm ──
+    for section in doc.sections:
+        section.left_margin = Cm(3)
+        section.right_margin = Cm(1.5)
+        section.top_margin = Cm(2)
+        section.bottom_margin = Cm(2)
 
-    doc.add_paragraph(f"Дата: {datetime.now().strftime('%d.%m.%Y')}")
-    doc.add_paragraph(f"Сессия: {session_id}")
-    doc.add_paragraph(f"Позиция: {target_name}")
+    # ── Default font ──
+    style = doc.styles["Normal"]
+    style.font.name = _FONT_NAME
+    style.font.size = _FONT_SIZE
 
-    # Analogs section
-    doc.add_heading("1. Сопоставимые позиции (аналоги)", level=1)
-    if analogs:
-        table = doc.add_table(rows=1, cols=4)
-        table.style = "Table Grid"
-        hdr = table.rows[0].cells
-        hdr[0].text = "ID СТЕ"
-        hdr[1].text = "Наименование"
-        hdr[2].text = "Категория"
-        hdr[3].text = "Основание выбора"
-        for analog in analogs:
-            row = table.add_row().cells
-            row[0].text = str(analog.get("cte_id", ""))
-            row[1].text = analog.get("name", "")
-            row[2].text = analog.get("category", "")
-            row[3].text = analog.get("match_reason", "")
-    else:
-        doc.add_paragraph("Аналоги не найдены.")
+    today = datetime.now().strftime("%d.%m.%Y")
 
-    # Prices section
-    doc.add_heading("2. Ценовая информация", level=1)
-    if prices:
-        table = doc.add_table(rows=1, cols=5)
-        table.style = "Table Grid"
-        hdr = table.rows[0].cells
-        hdr[0].text = "Позиция СТЕ"
-        hdr[1].text = "Цена за ед."
-        hdr[2].text = "Регион"
-        hdr[3].text = "Дата контракта"
-        hdr[4].text = "ID контракта"
-        for p in prices:
-            row = table.add_row().cells
-            row[0].text = str(p.get("Наименование позиции СТЕ", p.get("cte_name", "")))
-            row[1].text = f'{p.get("Цена за единицу", p.get("price", 0)):.2f}'
-            row[2].text = str(p.get("Регион заказчика", p.get("region", "")))
-            row[3].text = str(p.get("Дата заключения контракта", p.get("contract_date", "")))
-            row[4].text = str(p.get("Идентификатор контракта", p.get("contract_id", "")))
-    else:
-        doc.add_paragraph("Ценовые данные отсутствуют.")
+    # ── 1. Title ─────────────────────────────────────────────────────────
+    _add_styled_paragraph(
+        doc, "ОБОСНОВАНИЕ", bold=True, size=Pt(14),
+        alignment=WD_ALIGN_PARAGRAPH.CENTER,
+    )
+    _add_styled_paragraph(
+        doc,
+        "начальной (максимальной) цены контракта",
+        bold=True, size=Pt(14),
+        alignment=WD_ALIGN_PARAGRAPH.CENTER,
+        space_after=Pt(6),
+    )
+    _add_styled_paragraph(
+        doc,
+        f"Предмет контракта: {target_name}",
+        space_after=Pt(12),
+    )
 
-    # Outliers section
-    if outliers:
-        doc.add_heading("3. Исключённые выбросы", level=1)
-        doc.add_paragraph(f"Исключено {len(outliers)} позиций методом IsolationForest:")
-        for o in outliers:
-            price_val = o.get("Цена за единицу", o.get("price", 0))
-            name_val = o.get("Наименование позиции СТЕ", o.get("cte_name", ""))
-            doc.add_paragraph(f"  • {name_val}: {price_val:.2f} ₽", style="List Bullet")
+    # ── 2. Characteristics ───────────────────────────────────────────────
+    _add_styled_paragraph(doc, "1. Характеристики объекта закупки", bold=True,
+                          space_after=Pt(6))
+    first_analog = analogs[0] if analogs else {}
+    char_name = first_analog.get("name", target_name)
+    _add_styled_paragraph(doc, f"Наименование: {char_name}")
+    attrs = first_analog.get("attributes", {})
+    if attrs:
+        for key, val in attrs.items():
+            _add_styled_paragraph(doc, f"  {key}: {val}")
+    if region:
+        _add_styled_paragraph(doc, f"Регион поставки: {region}")
+    if unit:
+        _add_styled_paragraph(doc, f"Единица измерения: {unit}")
+    _add_styled_paragraph(
+        doc, f"Количество: {_format_price(quantity) if quantity != int(quantity) else int(quantity)}",
+        space_after=Pt(12),
+    )
 
-    # Calculation section
-    doc.add_heading("4. Расчёт НМЦК", level=1)
+    # ── 3. Method ────────────────────────────────────────────────────────
+    _add_styled_paragraph(doc, "2. Метод определения НМЦК", bold=True,
+                          space_after=Pt(6))
+    _add_styled_paragraph(
+        doc,
+        "Начальная (максимальная) цена контракта определена "
+        "методом сопоставимых рыночных цен (анализа рынка) "
+        "в соответствии с ч. 6 ст. 22 Федерального закона от 05.04.2013 "
+        "№ 44-ФЗ «О контрактной системе в сфере закупок товаров, работ, "
+        "услуг для обеспечения государственных и муниципальных нужд» "
+        "и Приказа Минэкономразвития России от 02.10.2013 № 567 "
+        "«Об утверждении Методических рекомендаций по применению методов "
+        "определения начальной (максимальной) цены контракта, цены "
+        "контракта, заключаемого с единственным поставщиком "
+        "(подрядчиком, исполнителем)».",
+        space_after=Pt(12),
+    )
 
-    calc_data = [
-        ("Число использованных цен", str(calculation.get("num_prices_used", 0))),
-        ("Средневзвешенная цена", f'{calculation.get("weighted_average_price", 0):.2f} ₽'),
-        ("Медиана", f'{calculation.get("median_price", 0):.2f} ₽'),
-        ("Коэффициент вариации", f'{calculation.get("coefficient_of_variation", 0):.1f}%'),
-        ("Однородность выборки", "Да" if calculation.get("is_homogeneous", True) else "Нет"),
-        ("НМЦК за единицу", f'{calculation.get("nmck_per_unit", 0):.2f} ₽'),
-        ("Итого НМЦК", f'{calculation.get("total_nmck", 0):.2f} ₽'),
-        (
-            "Допустимый ценовой диапазон",
-            f'{calculation.get("price_range_min", 0):.2f} — {calculation.get("price_range_max", 0):.2f} ₽',
-        ),
+    # ── 4. Sources ───────────────────────────────────────────────────────
+    _add_styled_paragraph(doc, "3. Источники ценовой информации", bold=True,
+                          space_after=Pt(6))
+    for i, p in enumerate(prices, 1):
+        contract_id = p.get("Идентификатор контракта", p.get("contract_id", ""))
+        date = _format_date(p.get("Дата заключения контракта", p.get("contract_date")))
+        rgn = p.get("Регион заказчика", p.get("region", ""))
+        source = p.get("_source")
+        if source == "manual":
+            _add_styled_paragraph(doc, f"{i}. Ручной ввод цены — {rgn}")
+        else:
+            _add_styled_paragraph(
+                doc, f"{i}. Контракт № {contract_id} от {date}, {rgn}")
+    _add_styled_paragraph(doc, "", space_after=Pt(6))
+
+    # ── 5. Formula ───────────────────────────────────────────────────────
+    _add_styled_paragraph(doc, "4. Формула расчёта НМЦК", bold=True,
+                          space_after=Pt(6))
+    _add_styled_paragraph(
+        doc,
+        "НМЦК = v × (Σ цi) / n",
+        bold=True,
+        alignment=WD_ALIGN_PARAGRAPH.CENTER,
+        space_after=Pt(6),
+    )
+    _add_styled_paragraph(doc, "где:")
+    _add_styled_paragraph(doc, "  v — количество товара (работ, услуг);")
+    _add_styled_paragraph(doc, "  n — количество значений, используемых в расчёте;")
+    _add_styled_paragraph(
+        doc,
+        "  цi — цена единицы товара (работы, услуги), приведённая "
+        "с учётом коэффициента пересчёта.",
+        space_after=Pt(12),
+    )
+
+    # ── 6. Calculation table ─────────────────────────────────────────────
+    _add_styled_paragraph(doc, "5. Расчёт НМЦК", bold=True, space_after=Pt(6))
+
+    n_prices = len(prices)
+    cols = 5
+    # header + price rows + 6 summary rows
+    table = doc.add_table(rows=1 + n_prices + 6, cols=cols)
+    _style_table(table)
+
+    # Header
+    headers = ["№", "Источник", "Цена за ед., руб.", "Врем. коэфф.", "Привед. цена, руб."]
+    for j, h in enumerate(headers):
+        _set_cell_text(table.rows[0].cells[j], h, bold=True,
+                       alignment=WD_ALIGN_PARAGRAPH.CENTER)
+
+    # Price rows
+    total_adjusted = 0.0
+    for i, p in enumerate(prices):
+        row = table.rows[1 + i]
+        raw_price = float(p.get("Цена за единицу", p.get("price", 0)))
+        tw = float(p.get("time_weight", 1.0))
+        adjusted = raw_price * tw
+        total_adjusted += adjusted
+
+        source = p.get("_source")
+        if source == "manual":
+            src_text = "Ручной ввод"
+        else:
+            cid = p.get("Идентификатор контракта", p.get("contract_id", ""))
+            src_text = f"Контракт № {cid}"
+
+        _set_cell_text(row.cells[0], str(i + 1), alignment=WD_ALIGN_PARAGRAPH.CENTER)
+        _set_cell_text(row.cells[1], src_text)
+        _set_cell_text(row.cells[2], _format_price(raw_price),
+                       alignment=WD_ALIGN_PARAGRAPH.RIGHT)
+        _set_cell_text(row.cells[3], f"{tw:.4f}",
+                       alignment=WD_ALIGN_PARAGRAPH.CENTER)
+        _set_cell_text(row.cells[4], _format_price(adjusted),
+                       alignment=WD_ALIGN_PARAGRAPH.RIGHT)
+
+    # Summary rows
+    avg_price = calculation.get("weighted_average_price", 0)
+    cv = calculation.get("coefficient_of_variation", 0)
+    nmck_unit = calculation.get("nmck_per_unit", 0)
+    total_nmck = calculation.get("total_nmck", 0)
+
+    summary_data = [
+        ("Количество ценовых данных (n)", str(n_prices)),
+        ("Средняя цена за единицу, руб.", _format_price(avg_price)),
+        ("Коэффициент вариации (КВ), %", f"{cv:.1f}"),
+        ("Количество (v)", str(int(quantity)) if quantity == int(quantity) else _format_price(quantity)),
+        ("НМЦК за единицу, руб.", _format_price(nmck_unit)),
+        ("ИТОГО НМЦК, руб.", _format_price(total_nmck)),
     ]
-    table = doc.add_table(rows=len(calc_data), cols=2)
-    table.style = "Table Grid"
-    for i, (label, value) in enumerate(calc_data):
-        table.rows[i].cells[0].text = label
-        table.rows[i].cells[1].text = value
+    for idx, (label, value) in enumerate(summary_data):
+        r = table.rows[1 + n_prices + idx]
+        # Merge first 4 cells for the label
+        r.cells[0].merge(r.cells[3])
+        _set_cell_text(r.cells[0], label, bold=True)
+        _set_cell_text(r.cells[4], value, bold=True,
+                       alignment=WD_ALIGN_PARAGRAPH.RIGHT)
 
-    # Justification section
-    doc.add_heading("5. Обоснование", level=1)
-    for j in justification:
-        doc.add_paragraph(f"{j.get('description', '')}", style="List Bullet")
-        data = j.get("data", {})
-        for k, v in data.items():
-            doc.add_paragraph(f"    {k}: {v}")
+    _add_styled_paragraph(doc, "", space_after=Pt(6))
+
+    # ── 7. Homogeneity ──────────────────────────────────────────────────
+    _add_styled_paragraph(doc, "6. Однородность ценовой информации", bold=True,
+                          space_after=Pt(6))
+    is_homo = calculation.get("is_homogeneous", True)
+    verdict = "однородна" if is_homo else "неоднородна"
+    _add_styled_paragraph(
+        doc,
+        f"Коэффициент вариации составляет {cv:.1f}%. "
+        f"Совокупность ценовой информации {verdict}.",
+    )
+    if not is_homo:
+        _add_styled_paragraph(
+            doc,
+            "Примечание: при неоднородности выборки (КВ > 33%) "
+            "рекомендуется провести дополнительный анализ рынка "
+            "или обосновать использование данной ценовой информации.",
+        )
+    _add_styled_paragraph(doc, "", space_after=Pt(6))
+
+    # ── 8. Outliers ──────────────────────────────────────────────────────
+    if outliers:
+        _add_styled_paragraph(doc, "7. Исключённые ценовые данные", bold=True,
+                              space_after=Pt(6))
+        _add_styled_paragraph(
+            doc,
+            f"Из расчёта исключено {len(outliers)} позиций "
+            "как статистически выбивающихся из выборки:",
+        )
+        for o in outliers:
+            price_val = float(o.get("Цена за единицу", o.get("price", 0)))
+            name_val = o.get("Наименование позиции СТЕ", o.get("cte_name", ""))
+            _add_styled_paragraph(
+                doc, f"  — {name_val}: {_format_price(price_val)} руб.")
+        _add_styled_paragraph(doc, "", space_after=Pt(6))
+
+    # ── 9. Total ─────────────────────────────────────────────────────────
+    section_num = 8 if outliers else 7
+    _add_styled_paragraph(
+        doc, f"{section_num}. Итого", bold=True, space_after=Pt(6))
+    words = number_to_words_ru(total_nmck)
+    _add_styled_paragraph(
+        doc,
+        f"НМЦК составляет: {_format_price(total_nmck)} руб. ({words})",
+        bold=True, space_after=Pt(12),
+    )
+
+    # ── 10. Signature block ──────────────────────────────────────────────
+    section_num += 1
+    _add_styled_paragraph(
+        doc, f"{section_num}. Подписи", bold=True, space_after=Pt(6))
+    _add_styled_paragraph(doc, f"Дата составления: {today}")
+    _add_styled_paragraph(doc, "")
+
+    sig_table = doc.add_table(rows=2, cols=3)
+    sig_table.alignment = WD_TABLE_ALIGNMENT.CENTER
+    sig_headers = ["Должность", "Подпись", "ФИО"]
+    for j, h in enumerate(sig_headers):
+        _set_cell_text(sig_table.rows[0].cells[j], h, bold=True,
+                       alignment=WD_ALIGN_PARAGRAPH.CENTER)
+    # Empty row for manual filling
+    for j in range(3):
+        _set_cell_text(sig_table.rows[1].cells[j], "________________",
+                       alignment=WD_ALIGN_PARAGRAPH.CENTER)
 
     doc.save(str(output_path))
+    logger.info("Document generated: %s", output_path)
+    return str(output_path)

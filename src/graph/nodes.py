@@ -334,7 +334,6 @@ def generate_document_node(state: PipelineState) -> PipelineState:
     }
 
     doc_path = generate_nmck_document(
-        template_path=settings.template_path,
         output_dir=settings.output_dir,
         session_id=session_id,
         target_name=state.get("target_cte_name", ""),
@@ -343,6 +342,9 @@ def generate_document_node(state: PipelineState) -> PipelineState:
         outliers=state.get("outlier_prices", []),
         calculation=calc_data,
         justification=state.get("justification", []),
+        quantity=state.get("quantity", 1.0),
+        region=state.get("region_filter"),
+        unit=state.get("unit_filter"),
     )
 
     state["document_path"] = doc_path
