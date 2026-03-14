@@ -136,15 +136,18 @@ async def get_analogs(session_id: str):
         analogs_raw = values.get("retrieved_analogs", [])
 
         from src.data_access.contract_repo import ContractRepository
-        cte_units_map = ContractRepository.get_units_by_cte([a.get("cte_id", 0) for a in analogs_raw])
+        cte_ids = [a.get("cte_id", 0) for a in analogs_raw]
+        cte_units_map = ContractRepository.get_units_by_cte(cte_ids)
+        cte_stats_map = ContractRepository.get_analog_stats(cte_ids)
         all_units = set()
 
         analogs = []
         for a in analogs_raw:
             c_id = a.get("cte_id", 0)
             u_list = cte_units_map.get(c_id, [])
+            stats = cte_stats_map.get(c_id, {})
             all_units.update(u_list)
-            
+
             analogs.append(AnalogResult(
                 cte_id=c_id,
                 name=a.get("name", ""),
@@ -156,7 +159,13 @@ async def get_analogs(session_id: str):
                 final_score=a.get("final_score", 0.0),
                 match_reason=a.get("match_reason", ""),
                 available_units=u_list,
+                contract_count=stats.get("contract_count", 0),
+                regions=stats.get("regions", []),
+                unique_suppliers=stats.get("unique_suppliers", 0),
             ))
+
+        # Sort: analogs with recent contracts first, then by score
+        analogs.sort(key=lambda a: (a.contract_count > 0, a.contract_count, a.final_score), reverse=True)
 
         return SearchResponse(
             session_id=session_id,
