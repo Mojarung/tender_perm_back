@@ -199,7 +199,7 @@ def process_prices(state: PipelineState) -> PipelineState:
         analysis.valid_prices.append({
             "Наименование позиции СТЕ": mp.get("name", "Ручной ввод"),
             "Цена за единицу": mp.get("price", 0),
-            "Регион заказчика": mp.get("region", ""),
+            "Регион заказчика": mp.get("region") or "",
             "Дата заключения контракта": None,
             "Идентификатор контракта": 0,
             "Идентификатор СТЕ по контракту": 0,
@@ -241,7 +241,7 @@ def process_prices(state: PipelineState) -> PipelineState:
         approved_prices.append({
             "Наименование позиции СТЕ": mp.get("name", "Ручной ввод"),
             "Цена за единицу": mp.get("price", 0),
-            "Регион заказчика": mp.get("region", ""),
+            "Регион заказчика": mp.get("region") or "",
             "Дата заключения контракта": None,
             "Идентификатор контракта": 0,
             "Идентификатор СТЕ по контракту": 0,
