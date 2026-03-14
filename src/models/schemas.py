@@ -110,11 +110,18 @@ class SearchResponse(BaseModel):
     available_units: list[str] = Field(default_factory=list, description="List of unique units of measurement for these analogs")
 
 
+class PriceSearchInfo(BaseModel):
+    requested_region: str = ""
+    scope: str = "region"
+    months: int = 12
+
+
 class PricesResponse(BaseModel):
     session_id: str
     filtered_prices: list[PriceResult]
     outlier_prices: list[PriceResult]
     total_found: int
+    search_info: PriceSearchInfo | None = None
 
 
 class CalculationResponse(BaseModel):

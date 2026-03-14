@@ -311,12 +311,16 @@ async def get_prices(session_id: str):
         outliers = values.get("outlier_prices", [])
 
         # If interrupted, state hasn't been committed yet; extract from interrupt payload
+        raw_info = values.get("price_search_info")
         tasks = getattr(state, "tasks", [])
-        if not filtered and tasks and tasks[0].interrupts:
+        if tasks and tasks[0].interrupts:
             interrupt_val = tasks[0].interrupts[0].value
             if isinstance(interrupt_val, dict) and interrupt_val.get("type") == "price_approval":
-                filtered = interrupt_val.get("filtered_prices", [])
-                outliers = interrupt_val.get("outlier_prices", [])
+                if not filtered:
+                    filtered = interrupt_val.get("filtered_prices", [])
+                    outliers = interrupt_val.get("outlier_prices", [])
+                if not raw_info:
+                    raw_info = interrupt_val.get("search_info")
 
         def _to_price_result(p: dict, idx: int, is_outlier: bool = False) -> PriceResult:
             date_val = p.get("Дата заключения контракта", "")
@@ -338,11 +342,15 @@ async def get_prices(session_id: str):
                 time_weight=p.get("time_weight", 1.0),
             )
 
+        from src.models.schemas import PriceSearchInfo
+        search_info = PriceSearchInfo(**raw_info) if raw_info else None
+
         return PricesResponse(
             session_id=session_id,
             filtered_prices=[_to_price_result(p, i) for i, p in enumerate(filtered)],
             outlier_prices=[_to_price_result(p, i + len(filtered), True) for i, p in enumerate(outliers)],
             total_found=len(filtered) + len(outliers),
+            search_info=search_info,
         )
     except Exception as e:
         logger.error("Error in get_prices for session %s: %s", session_id, e, exc_info=True)

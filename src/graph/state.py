@@ -21,6 +21,7 @@ class PipelineState(TypedDict, total=False):
     manual_prices_from_analogs: list[dict[str, Any]]
 
     # Step 2: Price fetching & filtering
+    price_search_info: dict[str, Any]
     raw_prices: list[dict[str, Any]]
     filtered_prices: list[dict[str, Any]]
     outlier_prices: list[dict[str, Any]]

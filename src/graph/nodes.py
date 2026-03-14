@@ -155,7 +155,10 @@ def process_prices(state: PipelineState) -> PipelineState:
 
     units = state.get("unit_filter")
     
-    # Get prices from contracts
+    # Get prices from contracts — with fallback tracking
+    search_scope = "region"
+    search_months = settings.price_months_back
+
     prices_df = ContractRepository.get_prices_for_ctes(
         cte_ids=cte_ids,
         region=region,
@@ -163,8 +166,9 @@ def process_prices(state: PipelineState) -> PipelineState:
         units=units,
     )
 
-    if prices_df.height == 0:
+    if prices_df.height == 0 and region:
         logger.warning("No prices found, trying without region filter")
+        search_scope = "all_regions"
         prices_df = ContractRepository.get_prices_for_ctes(
             cte_ids=cte_ids,
             region=None,
@@ -174,12 +178,20 @@ def process_prices(state: PipelineState) -> PipelineState:
 
     if prices_df.height == 0:
         logger.warning("Still no prices found, extending date range to 24 months")
+        search_scope = "all_regions_extended"
+        search_months = 24
         prices_df = ContractRepository.get_prices_for_ctes(
             cte_ids=cte_ids,
             region=None,
             months_back=24,
             units=units,
         )
+
+    state["price_search_info"] = {
+        "requested_region": region or "",
+        "scope": search_scope,
+        "months": search_months,
+    }
 
     state["raw_prices"] = prices_df.to_dicts()
 
@@ -220,6 +232,7 @@ def process_prices(state: PipelineState) -> PipelineState:
         "message": f"Сбор цен завершен. Успешно обработано {len(analysis.valid_prices)} записей. Коэффициент вариации: {analysis.coefficient_of_variation:.1f}%. Требуется утверждение выборки.",
         "filtered_prices": analysis.valid_prices,
         "outlier_prices": analysis.outlier_prices,
+        "search_info": state["price_search_info"],
         "statistics": {
             "median": analysis.median,
             "mean": analysis.mean,
