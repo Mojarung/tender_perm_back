@@ -1,3 +1,5 @@
+import os
+
 from qdrant_client import QdrantClient
 from qdrant_client.models import (
     Distance,
@@ -9,8 +11,21 @@ from qdrant_client.models import (
 )
 
 
+def _patch_no_proxy() -> None:
+    """Ensure localhost/127.0.0.1 bypass any VPN/corporate proxy."""
+    existing = os.environ.get("NO_PROXY", "")
+    needed = {"localhost", "127.0.0.1"}
+    parts = [p.strip() for p in existing.split(",") if p.strip()]
+    for h in needed:
+        if h not in parts:
+            parts.append(h)
+    os.environ["NO_PROXY"] = ",".join(parts)
+    os.environ["no_proxy"] = ",".join(parts)
+
+
 class QdrantRepository:
     def __init__(self, host: str, port: int, collection: str) -> None:
+        _patch_no_proxy()
         self._client = QdrantClient(host=host, port=port)
         self._collection = collection
 
@@ -25,6 +40,10 @@ class QdrantRepository:
                 ),
             )
 
+    def has_collection(self) -> bool:
+        collections = [c.name for c in self._client.get_collections().collections]
+        return self._collection in collections
+
     def upsert_batch(self, points: list[PointStruct]) -> None:
         self._client.upsert(
             collection_name=self._collection,
@@ -38,6 +57,9 @@ class QdrantRepository:
         limit: int = 50,
         score_threshold: float = 0.70,
     ) -> list[dict]:
+        import logging
+        _log = logging.getLogger(__name__)
+
         query_filter = None
         if category:
             query_filter = Filter(
@@ -49,13 +71,22 @@ class QdrantRepository:
                 ]
             )
 
-        results = self._client.query_points(
+        # First try without score_threshold to see raw results
+        response = self._client.query_points(
             collection_name=self._collection,
             query=vector,
             query_filter=query_filter,
             limit=limit,
-            score_threshold=score_threshold,
-        ).points
+        )
+        all_points = response.points
+        _log.info("query_points returned %d raw results", len(all_points))
+        if all_points:
+            _log.info("top score=%.4f, bottom score=%.4f",
+                       all_points[0].score, all_points[-1].score)
+
+        # Manual threshold filter
+        results = [p for p in all_points if p.score >= score_threshold]
+        _log.info("after threshold %.2f: %d results", score_threshold, len(results))
 
         return [
             {
@@ -67,6 +98,26 @@ class QdrantRepository:
             }
             for point in results
         ]
+
+    def get_vector_by_cte_id(self, cte_id: int) -> list[float] | None:
+        points = self._client.retrieve(
+            collection_name=self._collection,
+            ids=[cte_id],
+            with_vectors=True,
+            with_payload=False,
+        )
+        if not points:
+            return None
+
+        vector = points[0].vector
+        if vector is None:
+            return None
+
+        if isinstance(vector, dict):
+            first_vector = next(iter(vector.values()), None)
+            return first_vector
+
+        return vector
 
     def collection_size(self) -> int:
         info = self._client.get_collection(self._collection)

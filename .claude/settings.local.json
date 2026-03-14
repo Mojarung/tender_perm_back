@@ -1,7 +1,11 @@
 {
   "permissions": {
     "allow": [
-      "Bash(wc -l \"C:/Users/roldu/Documents/tender_perm_back/cte.json\" \"C:/Users/roldu/Documents/tender_perm_back/contracts \\(2\\).json\" 2>/dev/null)"
+      "Bash(wc -l \"C:/Users/roldu/Documents/tender_perm_back/cte.json\" \"C:/Users/roldu/Documents/tender_perm_back/contracts \\(2\\).json\" 2>/dev/null)",
+      "Bash(find:*)",
+      "Bash(cd:*)",
+      "Bash(curl:*)",
+      "Bash(python:*)"
     ]
   }
 }

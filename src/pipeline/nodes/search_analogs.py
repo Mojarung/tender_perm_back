@@ -20,6 +20,13 @@ def search_analogs(
     if target_cte_id:
         target_item = cte_repo.get(target_cte_id)
 
+    # Fallback: if no CTE ID given, resolve by text search
+    if not target_item and target_cte_name:
+        text_hits = cte_repo.search_by_name(target_cte_name, limit=1)
+        if text_hits:
+            target_cte_id = text_hits[0]["cte_id"]
+            target_item = cte_repo.get(target_cte_id)
+
     # Stage 1: exact match
     if target_cte_id:
         prices = contract_repo.get_prices_for_cte(target_cte_id)
@@ -59,23 +66,35 @@ def search_analogs(
                     match_details=details,
                 )
 
-    # Stages 3-4: semantic search (only if embeddings enabled)
-    if not qdrant_repo or not embedding_service:
+    # Stages 3-4: semantic search
+    if not qdrant_repo:
+        sorted_results = sorted(results.values(), key=lambda x: x.combined_score, reverse=True)
+        return sorted_results[:20]
+
+    vector: list[float] | None = None
+    if embedding_service:
+        if target_item:
+            text = build_embedding_text(target_item)
+        else:
+            text = target_cte_name
+        vector = embedding_service.encode_single(text)
+    elif target_cte_id is not None:
+        vector = qdrant_repo.get_vector_by_cte_id(target_cte_id)
+
+    if vector is None:
         sorted_results = sorted(results.values(), key=lambda x: x.combined_score, reverse=True)
         return sorted_results[:20]
 
     if target_item:
-        text = build_embedding_text(target_item)
+        category_filter = target_item["category"]
     else:
-        text = target_cte_name
+        category_filter = None
 
-    vector = embedding_service.encode_single(text)
-    category_filter = target_item["category"] if target_item else None
     qdrant_results = qdrant_repo.search(
         vector=vector,
         category=category_filter,
         limit=50,
-        score_threshold=0.70,
+        score_threshold=0.45,
     )
 
     for qr in qdrant_results:
@@ -120,7 +139,7 @@ def search_analogs(
             vector=vector,
             category=None,
             limit=100,
-            score_threshold=0.80,
+            score_threshold=0.55,
         )
         for qr in extended:
             cand_id = qr["cte_id"]

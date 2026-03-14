@@ -10,9 +10,13 @@ class Settings(BaseSettings):
     qdrant_port: int = 6333
     qdrant_collection: str = "cte_catalog"
 
-    embedding_model: str = "perplexity-ai/pplx-embed-v1-0.6b"
+    embedding_model: str = "nvidia/llama-nemotron-embed-1b-v2"
+    embedding_api_url: str = "https://integrate.api.nvidia.com/v1"
+    embedding_api_key: str = ""
+    embedding_dimensions: int = 1024
     embedding_batch_size: int = 256
-    enable_embeddings: bool = False
+    enable_embeddings: bool = True
+    reindex_embeddings_on_startup: bool = False
 
     host: str = "0.0.0.0"
     port: int = 8000

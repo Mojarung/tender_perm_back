@@ -1,0 +1,11 @@
+.git
+.venv
+venv
+.claude
+__pycache__
+*.pyc
+cte.json
+*.md
+.env
+.gitignore
+uv.lock

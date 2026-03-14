@@ -1,4 +1,7 @@
-from sentence_transformers import SentenceTransformer
+import logging
+from openai import OpenAI
+
+logger = logging.getLogger(__name__)
 
 PRIORITY_KEYS = [
     "Вид товаров", "Вид продукции", "Назначение", "Тип",
@@ -29,16 +32,43 @@ def build_embedding_text(item: dict) -> str:
 
 
 class EmbeddingService:
-    def __init__(self, model_name: str) -> None:
-        self._model = SentenceTransformer(model_name)
+    def __init__(
+        self,
+        model_name: str,
+        api_url: str,
+        api_key: str,
+        dimensions: int = 1024,
+    ) -> None:
+        self._client = OpenAI(base_url=api_url, api_key=api_key)
+        self._model = model_name
+        self._dimensions = dimensions
+        logger.info("EmbeddingService initialized: model=%s, api=%s, dims=%d", model_name, api_url, dimensions)
 
     def encode(self, texts: list[str], batch_size: int = 256) -> list[list[float]]:
-        embeddings = self._model.encode(texts, batch_size=batch_size, show_progress_bar=True)
-        return embeddings.tolist()
+        all_embeddings: list[list[float]] = []
+        for i in range(0, len(texts), batch_size):
+            batch = texts[i:i + batch_size]
+            response = self._client.embeddings.create(
+                input=batch,
+                model=self._model,
+                encoding_format="float",
+                extra_body={"input_type": "passage", "truncate": "NONE"},
+            )
+            for item in sorted(response.data, key=lambda x: x.index):
+                vec = item.embedding[:self._dimensions]
+                all_embeddings.append(vec)
+        return all_embeddings
 
     def encode_single(self, text: str) -> list[float]:
-        return self._model.encode(text).tolist()
+        response = self._client.embeddings.create(
+            input=[text],
+            model=self._model,
+            encoding_format="float",
+            extra_body={"input_type": "query", "truncate": "NONE"},
+        )
+        vec = response.data[0].embedding[:self._dimensions]
+        return vec
 
     @property
     def vector_size(self) -> int:
-        return self._model.get_sentence_embedding_dimension()
+        return self._dimensions

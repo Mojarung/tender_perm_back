@@ -74,21 +74,45 @@ async def lifespan(app: FastAPI):
     logger.info(f"Loaded {contract_repo.size} contracts")
 
     if settings.enable_embeddings:
-        logger.info("Initializing embedding service...")
-        embedding_service = EmbeddingService(settings.embedding_model)
-        init_embedding_service(embedding_service)
-        logger.info("Embedding service ready")
-
         logger.info("Connecting to Qdrant...")
         qdrant_repo = QdrantRepository(
             host=settings.qdrant_host,
             port=settings.qdrant_port,
             collection=settings.qdrant_collection,
         )
-        qdrant_repo.ensure_collection(vector_size=embedding_service.vector_size)
         init_qdrant_repo(qdrant_repo)
 
-        _index_cte_to_qdrant(cte_repo, qdrant_repo, embedding_service)
+        logger.info("Initializing embedding service (API: %s)...", settings.embedding_api_url)
+        embedding_service = EmbeddingService(
+            model_name=settings.embedding_model,
+            api_url=settings.embedding_api_url,
+            api_key=settings.embedding_api_key,
+            dimensions=settings.embedding_dimensions,
+        )
+        init_embedding_service(embedding_service)
+        logger.info("Embedding service ready")
+
+        if settings.reindex_embeddings_on_startup:
+            logger.info("Qdrant reindex is enabled; rebuilding collection if needed")
+            qdrant_repo.ensure_collection(vector_size=embedding_service.vector_size)
+            _index_cte_to_qdrant(cte_repo, qdrant_repo, embedding_service)
+        else:
+            if not qdrant_repo.has_collection():
+                raise RuntimeError(
+                    f"Qdrant collection '{settings.qdrant_collection}' not found. "
+                    "Provide precomputed embeddings or enable reindex_embeddings_on_startup=true."
+                )
+            points_count = qdrant_repo.collection_size()
+            if points_count == 0:
+                raise RuntimeError(
+                    f"Qdrant collection '{settings.qdrant_collection}' is empty. "
+                    "Provide precomputed embeddings or enable reindex_embeddings_on_startup=true."
+                )
+            logger.info(
+                "Using precomputed embeddings from Qdrant collection '%s' (%s points)",
+                settings.qdrant_collection,
+                points_count,
+            )
     else:
         logger.info("Embeddings disabled, skipping Qdrant and embedding model")
 

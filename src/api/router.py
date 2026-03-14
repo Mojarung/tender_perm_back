@@ -1,7 +1,10 @@
 import uuid
+import logging
 from pathlib import Path
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
+
+logger = logging.getLogger(__name__)
 
 from src.api.schemas import (
     CreateSessionRequest, CreateSessionResponse,
@@ -187,6 +190,47 @@ def search_cte(q: str, limit: int = 10):
         )
         for r in results
     ]
+
+
+@router.get("/cte/semantic-search", response_model=list[CTESearchResult])
+def semantic_search_cte(q: str, limit: int = 10):
+    """Free-text search via embeddings → Qdrant. Falls back to name search if embeddings disabled."""
+    qdrant_repo = get_qdrant_repo()
+    embedding_service = get_embedding_service()
+
+    logger.info("semantic-search: qdrant_repo=%s, embedding_service=%s", type(qdrant_repo), type(embedding_service))
+
+    if qdrant_repo is None or embedding_service is None:
+        logger.info("semantic-search: FALLBACK to text search")
+        results = get_cte_repo().search_by_name(q, limit=limit)
+        return [
+            CTESearchResult(
+                cte_id=r["cte_id"],
+                name=r["name"],
+                category=r["category"],
+                manufacturer=r["manufacturer"],
+            )
+            for r in results
+        ]
+
+    logger.info("semantic-search: encoding query '%s'", q)
+    vector = embedding_service.encode_single(q)
+    logger.info("semantic-search: vector dim=%d, first 3 values=%s", len(vector), vector[:3])
+
+    qdrant_results = qdrant_repo.search(vector=vector, category=None, limit=limit, score_threshold=0.5)
+    logger.info("semantic-search: qdrant returned %d results", len(qdrant_results))
+
+    output = []
+    cte_repo = get_cte_repo()
+    for qr in qdrant_results:
+        item = cte_repo.get(qr["cte_id"])
+        output.append(CTESearchResult(
+            cte_id=qr["cte_id"],
+            name=qr["name"],
+            category=qr["category"],
+            manufacturer=item["manufacturer"] if item else "",
+        ))
+    return output
 
 
 @router.get("/regions", response_model=list[str])
