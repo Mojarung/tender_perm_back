@@ -210,6 +210,14 @@ async def get_prices(session_id: str):
         filtered = values.get("filtered_prices", [])
         outliers = values.get("outlier_prices", [])
 
+        # If interrupted, state hasn't been committed yet; extract from interrupt payload
+        tasks = getattr(state, "tasks", [])
+        if not filtered and tasks and tasks[0].interrupts:
+            interrupt_val = tasks[0].interrupts[0].value
+            if isinstance(interrupt_val, dict) and interrupt_val.get("type") == "price_approval":
+                filtered = interrupt_val.get("filtered_prices", [])
+                outliers = interrupt_val.get("outlier_prices", [])
+
         def _to_price_result(p: dict, idx: int, is_outlier: bool = False) -> PriceResult:
             date_val = p.get("Дата заключения контракта", "")
             if hasattr(date_val, "isoformat"):
