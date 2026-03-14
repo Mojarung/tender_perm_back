@@ -125,6 +125,38 @@ class ContractRepository:
         )
 
     @classmethod
+    def get_analog_stats(cls, cte_ids: list[int], months_back: int = 12) -> dict[int, dict]:
+        """Per-CTE stats: contract count, regions, unique suppliers (last N months)."""
+        if cls._df is None or not cte_ids:
+            return {}
+
+        cutoff = datetime.now() - timedelta(days=months_back * 30)
+
+        df = cls._df.filter(
+            pl.col("Идентификатор СТЕ по контракту").is_in(cte_ids)
+            & (pl.col("Дата заключения контракта") >= cutoff)
+        )
+
+        if df.height == 0:
+            return {}
+
+        grouped = df.group_by("Идентификатор СТЕ по контракту").agg(
+            pl.len().alias("contract_count"),
+            pl.col("Регион заказчика").drop_nulls().unique().alias("regions"),
+            pl.col("ИНН поставщика").drop_nulls().n_unique().alias("unique_suppliers"),
+        )
+
+        result = {}
+        for row in grouped.iter_rows(named=True):
+            cte_id = row["Идентификатор СТЕ по контракту"]
+            result[cte_id] = {
+                "contract_count": row["contract_count"],
+                "regions": sorted([str(r) for r in row["regions"] if r]),
+                "unique_suppliers": row["unique_suppliers"],
+            }
+        return result
+
+    @classmethod
     def get_all_regions(cls) -> list[str]:
         """Return list of unique regions."""
         if cls._df is None:

@@ -77,9 +77,11 @@ target/
 
 # Jupyter Notebook
 .ipynb_checkpoints
+.qdrant-initialized
 
 # IPython
 profile_default/
+data/
 ipython_config.py
 
 # pyenv

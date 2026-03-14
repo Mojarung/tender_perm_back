@@ -62,7 +62,10 @@ class AnalogResult(BaseModel):
     attribute_overlap: float
     final_score: float
     match_reason: str
-    available_units: list[str] = Field(default_factory=list, description="List of units supported by this analog")
+    available_units: list[str] = Field(default_factory=list)
+    contract_count: int = Field(0, description="Contracts in last 12 months")
+    regions: list[str] = Field(default_factory=list, description="Regions where sold")
+    unique_suppliers: int = Field(0, description="Unique suppliers (by INN)")
 
 
 class PriceResult(BaseModel):
