@@ -168,6 +168,16 @@ async def get_analogs(session_id: str):
         raise HTTPException(status_code=404, detail=str(e))
 
 
+@router.get("/cte/{cte_id}/check")
+async def check_cte(cte_id: int):
+    """Quick check if a CTE ID exists in the catalog."""
+    import src.graph.nodes as nodes
+    item = nodes._cte_repo.get_item_by_id(cte_id)
+    if item:
+        return {"exists": True, "name": item["Наименование СТЕ"]}
+    return {"exists": False, "name": None}
+
+
 @router.post("/session/{session_id}/analogs/approve", response_model=SessionStatus)
 async def approve_analogs(session_id: str, request: AnalogApprovalRequest):
     """
@@ -305,15 +315,15 @@ async def get_prices(session_id: str):
                 date_val = date_val.isoformat()
             return PriceResult(
                 index=idx,
-                cte_id=p.get("Идентификатор СТЕ по контракту", 0),
-                cte_name=p.get("Наименование позиции СТЕ", ""),
-                price=p.get("Цена за единицу", 0),
-                quantity=p.get("Количество", 1),
-                unit=p.get("Единица измерения", "шт"),
-                region=p.get("Регион заказчика", ""),
-                contract_date=str(date_val),
-                contract_id=p.get("Идентификатор контракта", 0),
-                procurement_method=p.get("Способ закупки", ""),
+                cte_id=p.get("Идентификатор СТЕ по контракту") or 0,
+                cte_name=p.get("Наименование позиции СТЕ") or "",
+                price=p.get("Цена за единицу") or 0,
+                quantity=p.get("Количество") or 1,
+                unit=p.get("Единица измерения") or "шт",
+                region=p.get("Регион заказчика") or "",
+                contract_date=str(date_val) if date_val is not None else "",
+                contract_id=p.get("Идентификатор контракта") or 0,
+                procurement_method=p.get("Способ закупки") or "",
                 is_outlier=is_outlier,
                 outlier_reason=p.get("_outlier_reason", None),
                 time_weight=p.get("time_weight", 1.0),
