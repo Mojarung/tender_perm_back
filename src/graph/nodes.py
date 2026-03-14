@@ -1,13 +1,12 @@
 """LangGraph nodes for the NMCK pipeline with human-in-the-loop interrupts."""
 
 import logging
-import uuid
-from typing import Any
+
 
 import polars as pl
 from langgraph.graph import END, START, StateGraph
 from langgraph.checkpoint.memory import InMemorySaver
-from langgraph.types import Command, interrupt
+from langgraph.types import interrupt
 
 from src.graph.state import PipelineState
 from src.data_access.contract_repo import ContractRepository
@@ -91,13 +90,13 @@ def perform_search(state: PipelineState) -> PipelineState:
 
 def wait_for_analogs(state: PipelineState) -> PipelineState:
     """Dedicated node for human-in-the-loop analog approval."""
-    target_name = state["target_cte_name"]
+
     ranked = state.get("retrieved_analogs", [])
 
     # Interrupt for user to review analogs
     user_decision = interrupt({
         "type": "analog_approval",
-        "message": f"Найдено {len(ranked)} аналогов для '{target_name}'. Проверьте и одобрите.",
+        "message": f"Анализ завершен. Найдено {len(ranked)} позиций, соответствующих критериям поиска. Выберите аналоги для дальнейшего сбора цен.",
         "analogs": ranked,
     })
 
@@ -200,7 +199,7 @@ def process_prices(state: PipelineState) -> PipelineState:
     # Interrupt for user to review prices
     user_decision = interrupt({
         "type": "price_approval",
-        "message": f"Найдено {len(analysis.valid_prices)} цен ({len(analysis.outlier_prices)} выбросов исключено). CV={analysis.coefficient_of_variation:.1f}%",
+        "message": f"Сбор цен завершен. Успешно обработано {len(analysis.valid_prices)} записей. Коэффициент вариации: {analysis.coefficient_of_variation:.1f}%. Требуется утверждение выборки.",
         "filtered_prices": analysis.valid_prices,
         "outlier_prices": analysis.outlier_prices,
         "statistics": {
