@@ -1,7 +1,0 @@
-fastapi[standard]==0.115.0
-pydantic==2.9.2
-onnxruntime==1.19.2
-transformers==4.44.2
-scikit-learn==1.5.2
-numpy==2.1.2
-uvicorn==0.32.0

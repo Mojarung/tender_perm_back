@@ -1,52 +1,32 @@
 version: '3.8'
 
 services:
-  database:
-    image: ankane/pgvector:latest
-    container_name: tender_pgvector
-    environment:
-      POSTGRES_USER: ${POSTGRES_USER:-tender_user}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-tender_password}
-      POSTGRES_DB: ${POSTGRES_DB:-tenderhack_db}
-    ports:
-      - "5432:5432"
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U tender_user -d tenderhack_db"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-
-  ml_worker:
-    build: 
-      context: ./tender-ml-worker
-      dockerfile: Dockerfile
-    container_name: tender_ml_worker
-    expose:
-      - "8001"
-    environment:
-      - EMBEDDING_MODEL_DIR=/app/models/ru-e5-small-onnx
-    volumes:
-      - ./model_weights:/app/models # Maps local weights to avoid downloading inside container
-    command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8001", "--workers", "1"]
-
-  backend:
-    build: 
-      context: ./tender-backend
-      dockerfile: Dockerfile
-    container_name: tender_backend
-    depends_on:
-      database:
-        condition: service_healthy
-      ml_worker:
-        condition: service_started
+  api:
+    build: .
     ports:
       - "8000:8000"
     environment:
-      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-tender_user}:${POSTGRES_PASSWORD:-tender_password}@database:5432/${POSTGRES_DB:-tenderhack_db}
-      - ML_SERVICE_URL=http://ml_worker:8001
-    command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+      - TENDER_QDRANT_HOST=qdrant
+      - TENDER_QDRANT_PORT=6333
+      - TENDER_EMBEDDING_MODEL=perplexity-ai/pplx-embed-v1-0.6b
+      - TENDER_CONTRACTS_PATH=/app/data/contracts.json
+      - TENDER_CTE_PATH=/app/data/cte.json
+      - TRANSFORMERS_OFFLINE=1
+    volumes:
+      - ./contracts.json:/app/data/contracts.json:ro
+      - ./cte.json:/app/data/cte.json:ro
+      - ./templates:/app/templates:ro
+      - ./output:/app/output
+    depends_on:
+      - qdrant
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant_storage:/qdrant/storage
 
 volumes:
-  pgdata:
+  qdrant_storage:

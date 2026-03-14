@@ -1,0 +1,362 @@
+"""FastAPI routes for the NMCK pipeline."""
+
+import logging
+import uuid
+from typing import Any
+
+from fastapi import APIRouter, HTTPException
+from fastapi.responses import FileResponse
+from langgraph.types import Command
+
+from src.models.schemas import (
+    AnalogApprovalRequest,
+    CalculationResponse,
+    DocumentResponse,
+    NMCKResult,
+    PriceApprovalRequest,
+    PricesResponse,
+    RecalculateRequest,
+    SearchResponse,
+    SessionStartRequest,
+    SessionStatus,
+    AnalogResult,
+    PriceResult,
+)
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter(prefix="/api", tags=["NMCK Pipeline"])
+
+# Global graph reference (set during lifespan)
+_graph = None
+
+
+def set_graph(graph):
+    global _graph
+    _graph = graph
+
+
+def _get_config(session_id: str) -> dict:
+    return {"configurable": {"thread_id": session_id}}
+
+
+# ── Session management ──
+
+
+@router.post("/session/start", response_model=SessionStatus)
+async def start_session(request: SessionStartRequest):
+    """
+    Start a new NMCK calculation session.
+    This triggers analog search and pauses at the first interrupt.
+    """
+    session_id = str(uuid.uuid4())[:8]
+    config = _get_config(session_id)
+
+    initial_state = {
+        "session_id": session_id,
+        "target_cte_name": request.cte_name,
+        "target_category": request.category,
+        "region_filter": request.region,
+        "quantity": request.quantity,
+        "inflation_coefficient": 1.0,
+        "retrieved_analogs": [],
+        "user_approved_analogs": [],
+        "raw_prices": [],
+        "filtered_prices": [],
+        "outlier_prices": [],
+        "user_approved_prices": [],
+        "justification": [],
+        "current_step": "init",
+        "error": None,
+    }
+
+    logger.info(
+        "Starting session %s for '%s' (category=%s, region=%s)",
+        session_id,
+        request.cte_name,
+        request.category,
+        request.region,
+    )
+
+    # Invoke graph — will run search_analogs and hit the interrupt
+    result = _graph.invoke(initial_state, config)
+
+    # Check for interrupt (analog approval)
+    interrupts = result.get("__interrupt__", [])
+    if interrupts:
+        return SessionStatus(
+            session_id=session_id,
+            current_step="waiting_for_analog_approval",
+        )
+
+    return SessionStatus(
+        session_id=session_id,
+        current_step=result.get("current_step", "unknown"),
+        error=result.get("error"),
+    )
+
+
+@router.get("/session/{session_id}/status", response_model=SessionStatus)
+async def get_session_status(session_id: str):
+    """Get current status of a session."""
+    config = _get_config(session_id)
+    try:
+        state = _graph.get_state(config)
+        values = state.values
+        next_nodes = state.next
+
+        step = values.get("current_step", "unknown")
+        if next_nodes:
+            step = f"waiting_at_{next_nodes[0]}" if next_nodes else step
+
+        return SessionStatus(
+            session_id=session_id,
+            current_step=step,
+            error=values.get("error"),
+        )
+    except Exception as e:
+        raise HTTPException(status_code=404, detail=f"Session not found: {e}")
+
+
+# ── Analog Search & Approval ──
+
+
+@router.get("/session/{session_id}/analogs", response_model=SearchResponse)
+async def get_analogs(session_id: str):
+    """Get found analogs for review."""
+    config = _get_config(session_id)
+    try:
+        state = _graph.get_state(config)
+        values = state.values
+        analogs_raw = values.get("retrieved_analogs", [])
+
+        analogs = []
+        for a in analogs_raw:
+            analogs.append(AnalogResult(
+                cte_id=a.get("cte_id", 0),
+                name=a.get("name", ""),
+                category=a.get("category", ""),
+                manufacturer=a.get("manufacturer", ""),
+                attributes=a.get("attributes", {}),
+                cosine_score=a.get("cosine_score", 0.0),
+                attribute_overlap=a.get("attribute_overlap", 0.0),
+                final_score=a.get("final_score", 0.0),
+                match_reason=a.get("match_reason", ""),
+            ))
+
+        return SearchResponse(
+            session_id=session_id,
+            analogs=analogs,
+            total_found=len(analogs),
+        )
+    except Exception as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@router.post("/session/{session_id}/analogs/approve", response_model=SessionStatus)
+async def approve_analogs(session_id: str, request: AnalogApprovalRequest):
+    """
+    Approve analog selection and resume the pipeline.
+    This will trigger price processing and pause at the next interrupt.
+    """
+    config = _get_config(session_id)
+
+    resume_data = {
+        "approved_analog_ids": request.approved_analog_ids,
+        "manual_cte_ids": request.manual_cte_ids,
+    }
+
+    logger.info(
+        "Session %s: approving %d analogs (+%d manual)",
+        session_id,
+        len(request.approved_analog_ids),
+        len(request.manual_cte_ids),
+    )
+
+    result = _graph.invoke(Command(resume=resume_data), config)
+
+    interrupts = result.get("__interrupt__", [])
+    if interrupts:
+        return SessionStatus(
+            session_id=session_id,
+            current_step="waiting_for_price_approval",
+        )
+
+    return SessionStatus(
+        session_id=session_id,
+        current_step=result.get("current_step", "unknown"),
+        error=result.get("error"),
+    )
+
+
+# ── Price Review & Approval ──
+
+
+@router.get("/session/{session_id}/prices", response_model=PricesResponse)
+async def get_prices(session_id: str):
+    """Get filtered prices for review."""
+    config = _get_config(session_id)
+    try:
+        state = _graph.get_state(config)
+        values = state.values
+
+        filtered = values.get("filtered_prices", [])
+        outliers = values.get("outlier_prices", [])
+
+        def _to_price_result(p: dict, idx: int, is_outlier: bool = False) -> PriceResult:
+            date_val = p.get("Дата заключения контракта", "")
+            if hasattr(date_val, "isoformat"):
+                date_val = date_val.isoformat()
+            return PriceResult(
+                index=idx,
+                cte_id=p.get("Идентификатор СТЕ по контракту", 0),
+                cte_name=p.get("Наименование позиции СТЕ", ""),
+                price=p.get("Цена за единицу", 0),
+                quantity=p.get("Количество", 1),
+                unit=p.get("Единица измерения", "шт"),
+                region=p.get("Регион заказчика", ""),
+                contract_date=str(date_val),
+                contract_id=p.get("Идентификатор контракта", 0),
+                procurement_method=p.get("Способ закупки", ""),
+                is_outlier=is_outlier,
+                time_weight=p.get("time_weight", 1.0),
+            )
+
+        return PricesResponse(
+            session_id=session_id,
+            filtered_prices=[_to_price_result(p, i) for i, p in enumerate(filtered)],
+            outlier_prices=[_to_price_result(p, i, True) for i, p in enumerate(outliers)],
+            total_found=len(filtered) + len(outliers),
+        )
+    except Exception as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@router.post("/session/{session_id}/prices/approve", response_model=SessionStatus)
+async def approve_prices(session_id: str, request: PriceApprovalRequest):
+    """
+    Approve price selection and resume the pipeline.
+    This triggers NMCK calculation and document generation.
+    """
+    config = _get_config(session_id)
+
+    resume_data = {
+        "approved_price_indices": request.approved_price_indices,
+        "manual_prices": [mp.model_dump() for mp in request.manual_prices],
+    }
+
+    logger.info(
+        "Session %s: approving %d prices (+%d manual)",
+        session_id,
+        len(request.approved_price_indices),
+        len(request.manual_prices),
+    )
+
+    result = _graph.invoke(Command(resume=resume_data), config)
+
+    return SessionStatus(
+        session_id=session_id,
+        current_step=result.get("current_step", "document_generated"),
+        error=result.get("error"),
+    )
+
+
+# ── Calculation & Document ──
+
+
+@router.get("/session/{session_id}/calculation", response_model=CalculationResponse)
+async def get_calculation(session_id: str):
+    """Get NMCK calculation result with justification."""
+    config = _get_config(session_id)
+    try:
+        state = _graph.get_state(config)
+        values = state.values
+
+        result = NMCKResult(
+            weighted_average_price=values.get("weighted_average_price", 0),
+            median_price=values.get("median_price", 0),
+            coefficient_of_variation=values.get("coefficient_of_variation", 0),
+            is_homogeneous=values.get("is_homogeneous", True),
+            nmck_per_unit=values.get("nmck_per_unit", 0),
+            total_nmck=values.get("total_nmck", 0),
+            price_range_min=values.get("price_range_min", 0),
+            price_range_max=values.get("price_range_max", 0),
+            num_prices_used=len(values.get("user_approved_prices", [])),
+            justification=values.get("justification", []),
+        )
+
+        return CalculationResponse(session_id=session_id, result=result)
+    except Exception as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@router.get("/session/{session_id}/document")
+async def get_document(session_id: str):
+    """Download the generated .docx justification document."""
+    config = _get_config(session_id)
+    try:
+        state = _graph.get_state(config)
+        values = state.values
+        doc_path = values.get("document_path")
+
+        if not doc_path:
+            raise HTTPException(
+                status_code=400,
+                detail="Document not yet generated. Complete the pipeline first.",
+            )
+
+        return FileResponse(
+            path=doc_path,
+            filename=f"nmck_justification_{session_id}.docx",
+            media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@router.post("/session/{session_id}/recalculate", response_model=CalculationResponse)
+async def recalculate(session_id: str, request: RecalculateRequest):
+    """Recalculate NMCK with different parameters (without re-running search)."""
+    config = _get_config(session_id)
+    try:
+        state = _graph.get_state(config)
+        values = state.values
+
+        approved_prices = values.get("user_approved_prices", [])
+        if not approved_prices:
+            raise HTTPException(status_code=400, detail="No approved prices found")
+
+        import polars as pl
+        from src.ml.stats import analyze_prices as _analyze
+        from src.services.nmck_service import calculate_nmck as _calc
+
+        df = pl.DataFrame(approved_prices)
+        analysis = _analyze(df, price_col="Цена за единицу")
+        quantity = request.quantity or values.get("quantity", 1.0)
+
+        result = _calc(
+            analysis=analysis,
+            quantity=quantity,
+            inflation_coefficient=request.inflation_coefficient,
+        )
+
+        nmck_result = NMCKResult(
+            weighted_average_price=result.weighted_average_price,
+            median_price=result.median_price,
+            coefficient_of_variation=result.coefficient_of_variation,
+            is_homogeneous=result.is_homogeneous,
+            nmck_per_unit=result.nmck_per_unit,
+            total_nmck=result.total_nmck,
+            price_range_min=result.price_range_min,
+            price_range_max=result.price_range_max,
+            num_prices_used=result.num_prices_used,
+            justification=result.justification or [],
+        )
+
+        return CalculationResponse(session_id=session_id, result=nmck_result)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
