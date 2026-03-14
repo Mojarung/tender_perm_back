@@ -2,7 +2,6 @@
 
 import logging
 import uuid
-from typing import Any
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
@@ -11,7 +10,6 @@ from langgraph.types import Command
 from src.models.schemas import (
     AnalogApprovalRequest,
     CalculationResponse,
-    DocumentResponse,
     NMCKResult,
     PriceApprovalRequest,
     PricesResponse,
@@ -181,7 +179,8 @@ async def approve_analogs(session_id: str, request: AnalogApprovalRequest):
     resume_data = {
         "approved_analog_ids": request.approved_analog_ids,
         "manual_cte_ids": request.manual_cte_ids,
-        "unit": request.unit,
+        "units": request.units,
+        "manual_prices": [mp.model_dump() for mp in request.manual_prices] if request.manual_prices else [],
     }
 
     logger.info(
@@ -248,7 +247,8 @@ async def reapprove_analogs(session_id: str, request: AnalogApprovalRequest):
             "user_approved_prices": [],
             "current_step": "analogs_approved",
             "error": None,
-            "unit_filter": request.unit,
+            "unit_filter": request.units,
+            "manual_prices_from_analogs": [mp.model_dump() for mp in request.manual_prices] if request.manual_prices else [],
         }
         
         logger.info(
@@ -326,6 +326,7 @@ async def get_prices(session_id: str):
             total_found=len(filtered) + len(outliers),
         )
     except Exception as e:
+        logger.error("Error in get_prices for session %s: %s", session_id, e, exc_info=True)
         raise HTTPException(status_code=404, detail=str(e))
 
 

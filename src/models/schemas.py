@@ -20,7 +20,11 @@ class AnalogApprovalRequest(BaseModel):
         default_factory=list,
         description="Additional CTE IDs manually added by user",
     )
-    unit: str | None = Field(None, description="Selected unit of measurement for price filtering")
+    units: list[str] | None = Field(None, description="Selected units of measurement for price filtering")
+    manual_prices: list["ManualPrice"] = Field(
+        default_factory=list,
+        description="Custom manual prices added at the analog stage",
+    )
 
 
 class PriceApprovalRequest(BaseModel):

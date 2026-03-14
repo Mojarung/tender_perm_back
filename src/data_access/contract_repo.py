@@ -74,10 +74,10 @@ class ContractRepository:
         cte_ids: list[int],
         region: str | None = None,
         months_back: int = 12,
-        unit: str | None = None,
+        units: list[str] | None = None,
     ) -> pl.DataFrame:
         """
-        Filter contracts by CTE IDs, optional region, optional unit, and date window.
+        Filter contracts by CTE IDs, optional region, optional units, and date window.
 
         Returns a DataFrame with relevant contract rows.
         """
@@ -94,15 +94,15 @@ class ContractRepository:
         if region:
             query = query.filter(pl.col("Регион заказчика") == region)
             
-        if unit:
-            query = query.filter(pl.col("Единица измерения") == unit)
+        if units and len(units) > 0:
+            query = query.filter(pl.col("Единица измерения").is_in(units))
 
         logger.info(
-            "Found %d price records for %d CTE IDs (region=%s, unit=%s, months_back=%d)",
+            "Found %d price records for %d CTE IDs (region=%s, units=%s, months_back=%d)",
             query.height,
             len(cte_ids),
             region,
-            unit,
+            units,
             months_back,
         )
         return query

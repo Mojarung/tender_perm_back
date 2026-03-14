@@ -18,6 +18,7 @@ class PipelineState(TypedDict, total=False):
     # Step 1: Analog search
     retrieved_analogs: list[dict[str, Any]]
     user_approved_analogs: list[dict[str, Any]]
+    manual_prices_from_analogs: list[dict[str, Any]]
 
     # Step 2: Price fetching & filtering
     raw_prices: list[dict[str, Any]]

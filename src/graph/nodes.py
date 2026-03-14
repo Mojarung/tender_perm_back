@@ -124,7 +124,8 @@ def wait_for_analogs(state: PipelineState) -> PipelineState:
             })
 
     state["user_approved_analogs"] = approved
-    state["unit_filter"] = user_decision.get("unit")
+    state["manual_prices_from_analogs"] = user_decision.get("manual_prices", [])
+    state["unit_filter"] = user_decision.get("units")
     state["current_step"] = "analogs_approved"
     return state
 
@@ -152,14 +153,14 @@ def process_prices(state: PipelineState) -> PipelineState:
     cte_ids = [a["cte_id"] for a in approved_analogs]
     logger.info("Fetching prices for %d CTE IDs", len(cte_ids))
 
-    unit = state.get("unit_filter")
+    units = state.get("unit_filter")
     
     # Get prices from contracts
     prices_df = ContractRepository.get_prices_for_ctes(
         cte_ids=cte_ids,
         region=region,
         months_back=settings.price_months_back,
-        unit=unit,
+        units=units,
     )
 
     if prices_df.height == 0:
@@ -168,7 +169,7 @@ def process_prices(state: PipelineState) -> PipelineState:
             cte_ids=cte_ids,
             region=None,
             months_back=settings.price_months_back,
-            unit=unit,
+            units=units,
         )
 
     if prices_df.height == 0:
@@ -177,7 +178,7 @@ def process_prices(state: PipelineState) -> PipelineState:
             cte_ids=cte_ids,
             region=None,
             months_back=24,
-            unit=unit,
+            units=units,
         )
 
     state["raw_prices"] = prices_df.to_dicts()
@@ -191,6 +192,23 @@ def process_prices(state: PipelineState) -> PipelineState:
         price_col="Цена за единицу",
         max_cv=settings.max_coefficient_of_variation,
     )
+
+    # Add manual prices from the analog stage to the pool of "valid prices" for review
+    manual_from_analogs = state.get("manual_prices_from_analogs", [])
+    for mp in manual_from_analogs:
+        analysis.valid_prices.append({
+            "Наименование позиции СТЕ": mp.get("name", "Ручной ввод"),
+            "Цена за единицу": mp.get("price", 0),
+            "Регион заказчика": mp.get("region", ""),
+            "Дата заключения контракта": None,
+            "Идентификатор контракта": 0,
+            "Идентификатор СТЕ по контракту": 0,
+            "Количество": 1.0,
+            "Единица измерения": "шт",
+            "Способ закупки": "Ручной ввод",
+            "time_weight": 1.0,
+            "_source": "manual",
+        })
 
     state["filtered_prices"] = analysis.valid_prices
     state["outlier_prices"] = analysis.outlier_prices
