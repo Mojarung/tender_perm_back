@@ -20,6 +20,7 @@ class AnalogApprovalRequest(BaseModel):
         default_factory=list,
         description="Additional CTE IDs manually added by user",
     )
+    unit: str | None = Field(None, description="Selected unit of measurement for price filtering")
 
 
 class PriceApprovalRequest(BaseModel):
@@ -57,6 +58,7 @@ class AnalogResult(BaseModel):
     attribute_overlap: float
     final_score: float
     match_reason: str
+    available_units: list[str] = Field(default_factory=list, description="List of units supported by this analog")
 
 
 class PriceResult(BaseModel):
@@ -98,6 +100,7 @@ class SearchResponse(BaseModel):
     session_id: str
     analogs: list[AnalogResult]
     total_found: int
+    available_units: list[str] = Field(default_factory=list, description="List of unique units of measurement for these analogs")
 
 
 class PricesResponse(BaseModel):

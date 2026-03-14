@@ -48,14 +48,36 @@ class ContractRepository:
         return cls._loaded
 
     @classmethod
+    def get_units_by_cte(cls, cte_ids: list[int]) -> dict[int, list[str]]:
+        """Get a mapping of CTE ID to its available units of measurement."""
+        if cls._df is None:
+            return {}
+            
+        df_filtered = cls._df.filter(pl.col("Идентификатор СТЕ по контракту").is_in(cte_ids))
+        if df_filtered.height == 0:
+            return {}
+            
+        grouped = df_filtered.group_by("Идентификатор СТЕ по контракту").agg(
+            pl.col("Единица измерения").drop_nulls().unique()
+        )
+        
+        result = {}
+        for row in grouped.iter_rows():
+            cte_id = row[0]
+            units = row[1]
+            result[cte_id] = [str(u) for u in units if str(u).strip()]
+        return result
+
+    @classmethod
     def get_prices_for_ctes(
         cls,
         cte_ids: list[int],
         region: str | None = None,
         months_back: int = 12,
+        unit: str | None = None,
     ) -> pl.DataFrame:
         """
-        Filter contracts by CTE IDs, optional region, and date window.
+        Filter contracts by CTE IDs, optional region, optional unit, and date window.
 
         Returns a DataFrame with relevant contract rows.
         """
@@ -71,12 +93,16 @@ class ContractRepository:
 
         if region:
             query = query.filter(pl.col("Регион заказчика") == region)
+            
+        if unit:
+            query = query.filter(pl.col("Единица измерения") == unit)
 
         logger.info(
-            "Found %d price records for %d CTE IDs (region=%s, months_back=%d)",
+            "Found %d price records for %d CTE IDs (region=%s, unit=%s, months_back=%d)",
             query.height,
             len(cte_ids),
             region,
+            unit,
             months_back,
         )
         return query

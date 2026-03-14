@@ -125,6 +125,7 @@ def wait_for_analogs(state: PipelineState) -> PipelineState:
             })
 
     state["user_approved_analogs"] = approved
+    state["unit_filter"] = user_decision.get("unit")
     state["current_step"] = "analogs_approved"
     return state
 
@@ -152,11 +153,14 @@ def process_prices(state: PipelineState) -> PipelineState:
     cte_ids = [a["cte_id"] for a in approved_analogs]
     logger.info("Fetching prices for %d CTE IDs", len(cte_ids))
 
+    unit = state.get("unit_filter")
+    
     # Get prices from contracts
     prices_df = ContractRepository.get_prices_for_ctes(
         cte_ids=cte_ids,
         region=region,
         months_back=settings.price_months_back,
+        unit=unit,
     )
 
     if prices_df.height == 0:
@@ -165,6 +169,7 @@ def process_prices(state: PipelineState) -> PipelineState:
             cte_ids=cte_ids,
             region=None,
             months_back=settings.price_months_back,
+            unit=unit,
         )
 
     if prices_df.height == 0:
@@ -173,6 +178,7 @@ def process_prices(state: PipelineState) -> PipelineState:
             cte_ids=cte_ids,
             region=None,
             months_back=24,
+            unit=unit,
         )
 
     state["raw_prices"] = prices_df.to_dicts()

@@ -137,10 +137,18 @@ async def get_analogs(session_id: str):
         values = state.values
         analogs_raw = values.get("retrieved_analogs", [])
 
+        from src.data_access.contract_repo import ContractRepository
+        cte_units_map = ContractRepository.get_units_by_cte([a.get("cte_id", 0) for a in analogs_raw])
+        all_units = set()
+
         analogs = []
         for a in analogs_raw:
+            c_id = a.get("cte_id", 0)
+            u_list = cte_units_map.get(c_id, [])
+            all_units.update(u_list)
+            
             analogs.append(AnalogResult(
-                cte_id=a.get("cte_id", 0),
+                cte_id=c_id,
                 name=a.get("name", ""),
                 category=a.get("category", ""),
                 manufacturer=a.get("manufacturer", ""),
@@ -149,12 +157,14 @@ async def get_analogs(session_id: str):
                 attribute_overlap=a.get("attribute_overlap", 0.0),
                 final_score=a.get("final_score", 0.0),
                 match_reason=a.get("match_reason", ""),
+                available_units=u_list,
             ))
 
         return SearchResponse(
             session_id=session_id,
             analogs=analogs,
             total_found=len(analogs),
+            available_units=sorted(list(all_units)),
         )
     except Exception as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -171,6 +181,7 @@ async def approve_analogs(session_id: str, request: AnalogApprovalRequest):
     resume_data = {
         "approved_analog_ids": request.approved_analog_ids,
         "manual_cte_ids": request.manual_cte_ids,
+        "unit": request.unit,
     }
 
     logger.info(
@@ -236,7 +247,8 @@ async def reapprove_analogs(session_id: str, request: AnalogApprovalRequest):
             "outlier_prices": [],
             "user_approved_prices": [],
             "current_step": "analogs_approved",
-            "error": None
+            "error": None,
+            "unit_filter": request.unit,
         }
         
         logger.info(
@@ -310,7 +322,7 @@ async def get_prices(session_id: str):
         return PricesResponse(
             session_id=session_id,
             filtered_prices=[_to_price_result(p, i) for i, p in enumerate(filtered)],
-            outlier_prices=[_to_price_result(p, i, True) for i, p in enumerate(outliers)],
+            outlier_prices=[_to_price_result(p, i + len(filtered), True) for i, p in enumerate(outliers)],
             total_found=len(filtered) + len(outliers),
         )
     except Exception as e:

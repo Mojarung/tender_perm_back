@@ -11,6 +11,7 @@ class PipelineState(TypedDict, total=False):
     target_cte_name: str
     target_category: str | None
     region_filter: str | None
+    unit_filter: str | None
     quantity: float
     inflation_coefficient: float
 
