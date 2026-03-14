@@ -27,10 +27,16 @@ def embed_text(text: str) -> list[float]:
     else:
         # e5 models expect prefixes
         inputs = tokenizer(f"query: {text}", return_tensors="np", padding=True, truncation=True, max_length=512)
-        outputs = session.run(None, {
+        onnx_inputs = {
             "input_ids": inputs["input_ids"].astype(np.int64),
             "attention_mask": inputs["attention_mask"].astype(np.int64)
-        })
+        }
+        if "token_type_ids" in inputs:
+            onnx_inputs["token_type_ids"] = inputs["token_type_ids"].astype(np.int64)
+        else:
+            onnx_inputs["token_type_ids"] = np.zeros_like(inputs["input_ids"]).astype(np.int64)
+            
+        outputs = session.run(None, onnx_inputs)
         token_embeddings = outputs[0]
         attention_mask = inputs["attention_mask"]
         
