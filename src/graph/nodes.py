@@ -31,16 +31,12 @@ def set_dependencies(embedder, cte_repo):
     _cte_repo = cte_repo
 
 
-# ── Node: search_analogs ──
-
-
-def search_analogs(state: PipelineState) -> PipelineState:
+def perform_search(state: PipelineState) -> PipelineState:
     """
     Search for analog CTE items using hybrid search:
     1. Embed the user query
     2. Search Qdrant with optional category filter
     3. Rank by combined cosine + attribute overlap
-    4. Interrupt for user approval
     """
     target_name = state["target_cte_name"]
     category = state.get("target_category")
@@ -80,15 +76,23 @@ def search_analogs(state: PipelineState) -> PipelineState:
                 raw_results.append(r)
                 seen_ids.add(r["cte_id"])
 
-    # Rank results with attribute overlap
+    # Rank results with attribute overlap and keyword boost
     ranked = rank_search_results(
         raw_results=raw_results,
+        query_text=target_name,
         query_category=category,
         limit=settings.search_result_limit,
     )
 
     state["retrieved_analogs"] = ranked
     state["current_step"] = "analogs_found"
+    return state
+
+
+def wait_for_analogs(state: PipelineState) -> PipelineState:
+    """Dedicated node for human-in-the-loop analog approval."""
+    target_name = state["target_cte_name"]
+    ranked = state.get("retrieved_analogs", [])
 
     # Interrupt for user to review analogs
     user_decision = interrupt({
@@ -317,13 +321,15 @@ def build_graph():
     """Build and compile the LangGraph state machine."""
     builder = StateGraph(PipelineState)
 
-    builder.add_node("search_analogs", search_analogs)
+    builder.add_node("perform_search", perform_search)
+    builder.add_node("wait_for_analogs", wait_for_analogs)
     builder.add_node("process_prices", process_prices)
     builder.add_node("calculate_nmcc", calculate_nmcc_node)
     builder.add_node("generate_document", generate_document_node)
 
-    builder.add_edge(START, "search_analogs")
-    builder.add_edge("search_analogs", "process_prices")
+    builder.add_edge(START, "perform_search")
+    builder.add_edge("perform_search", "wait_for_analogs")
+    builder.add_edge("wait_for_analogs", "process_prices")
     builder.add_edge("process_prices", "calculate_nmcc")
     builder.add_edge("calculate_nmcc", "generate_document")
     builder.add_edge("generate_document", END)

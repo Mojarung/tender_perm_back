@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Тендер Пермь - Поиск Аналогов (NVIDIA Embeddings)</title>
+    <style>
+        :root {
+            --primary: #4f46e5;
+            --primary-hover: #4338ca;
+            --bg: #f3f4f6;
+            --surface: #ffffff;
+            --text-main: #111827;
+            --text-muted: #6b7280;
+            --border: #e5e7eb;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: var(--bg);
+            color: var(--text-main);
+            line-height: 1.5;
+            padding: 2rem;
+        }
+
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+        }
+
+        .header {
+            margin-bottom: 2rem;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 2rem;
+            color: var(--primary);
+            margin-bottom: 0.5rem;
+        }
+
+        .search-box {
+            background: var(--surface);
+            padding: 1.5rem;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+            margin-bottom: 2rem;
+            display: flex;
+            gap: 1rem;
+            flex-wrap: wrap;
+        }
+
+        .input-group {
+            flex: 1;
+            min-width: 200px;
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+        }
+
+        input {
+            padding: 0.75rem 1rem;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            font-size: 1rem;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+
+        input:focus {
+            border-color: var(--primary);
+        }
+
+        button {
+            background-color: var(--primary);
+            color: white;
+            border: none;
+            padding: 0.75rem 1.5rem;
+            border-radius: 8px;
+            font-size: 1rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: background-color 0.2s;
+            height: fit-content;
+            align-self: flex-end;
+        }
+
+        button:hover {
+            background-color: var(--primary-hover);
+        }
+
+        button:disabled {
+            background-color: var(--text-muted);
+            cursor: not-allowed;
+        }
+
+        .loader {
+            display: none;
+            text-align: center;
+            margin: 2rem 0;
+            color: var(--text-muted);
+        }
+
+        .results {
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+        }
+
+        .result-card {
+            background: var(--surface);
+            border-radius: 12px;
+            padding: 1.5rem;
+            box-shadow: 0 2px 4px -1px rgba(0, 0, 0, 0.05);
+            border-left: 4px solid var(--primary);
+            transition: transform 0.2s;
+            animation: fadeIn 0.3s ease-out;
+        }
+
+        .result-card:hover {
+            transform: translateY(-2px);
+        }
+
+        .result-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 0.5rem;
+        }
+
+        .result-title {
+            font-weight: 600;
+            font-size: 1.125rem;
+            color: var(--text-main);
+        }
+
+        .score-badge {
+            background: #eef2ff;
+            color: var(--primary);
+            padding: 0.25rem 0.75rem;
+            border-radius: 9999px;
+            font-size: 0.875rem;
+            font-weight: 600;
+        }
+
+        .result-meta {
+            font-size: 0.875rem;
+            color: var(--text-muted);
+            margin-bottom: 1rem;
+        }
+
+        .attributes {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 0.5rem;
+            font-size: 0.875rem;
+        }
+
+        .attr-item {
+            background: var(--bg);
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Умный поиск СТЕ (NVIDIA AI)</h1>
+            <p>Ввод характеристик и наименования товара для семантического поиска</p>
+        </div>
+
+        <div class="search-box">
+            <div class="input-group">
+                <label for="query">Что ищем? (Наименование)</label>
+                <input type="text" id="query" placeholder="Например: Бумага А4 белая" onkeypress="handleEnter(event)">
+            </div>
+            <div class="input-group">
+                <label for="category">Категория (опционально)</label>
+                <input type="text" id="category" placeholder="Например: Бумага для офисной техники" onkeypress="handleEnter(event)">
+            </div>
+            <button id="searchBtn" onclick="performSearch()">Найти аналоги</button>
+        </div>
+
+        <div id="loader" class="loader">
+            ⏳ Нейросеть генерирует вектора и ищет совпадения...
+        </div>
+
+        <div id="statusMsg" style="text-align: center; margin-bottom: 1rem; color: var(--text-muted);"></div>
+
+        <div id="results" class="results">
+            <!-- Results will be injected here -->
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = 'http://localhost:8000/api';
+
+        function handleEnter(e) {
+            if (e.key === 'Enter') {
+                performSearch();
+            }
+        }
+
+        async function performSearch() {
+            const queryInfo = document.getElementById('query').value.trim();
+            const categoryInfo = document.getElementById('category').value.trim();
+            
+            if (!queryInfo) {
+                alert('Пожалуйста, введите наименование товара для поиска');
+                return;
+            }
+
+            const btn = document.getElementById('searchBtn');
+            const loader = document.getElementById('loader');
+            const resultsDiv = document.getElementById('results');
+            const statusMsg = document.getElementById('statusMsg');
+
+            btn.disabled = true;
+            loader.style.display = 'block';
+            resultsDiv.innerHTML = '';
+            statusMsg.textContent = 'Инициализация сессии поиска...';
+
+            try {
+                // 1. Старт сессии
+                const startRes = await fetch(`${API_BASE}/session/start`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        cte_name: queryInfo,
+                        category: categoryInfo || null,
+                        region: null,
+                        quantity: 1
+                    })
+                });
+
+                if (!startRes.ok) throw new Error('Ошибка запуска сессии');
+                
+                const startData = await startRes.json();
+                const sessionId = startData.session_id;
+
+                statusMsg.textContent = `Сессия ${sessionId}. Ожидаем результаты из базы Qdrant...`;
+
+                // 2. Получение аналогов (после отработки узла search_analogs)
+                // Даем графу чуть времени, хотя API возвращает управление сразу после прерывания
+                
+                let attempt = 0;
+                let analogs = null;
+
+                // Увеличиваем время ожидания до 30 секунд (30 попыток по 1 сек)
+                while(attempt < 30) {
+                    await new Promise(r => setTimeout(r, 1000));
+                    
+                    const statusRes = await fetch(`${API_BASE}/session/${sessionId}/status`);
+                    const statusData = await statusRes.json();
+                    
+                    if (statusData.current_step === 'waiting_for_analog_approval' || statusData.current_step === 'analogs_found') {
+                        // Готово! Забираем результаты
+                        const analogsRes = await fetch(`${API_BASE}/session/${sessionId}/analogs`);
+                        const analogsData = await analogsRes.json();
+                        analogs = analogsData.analogs;
+                        break;
+                    }
+                    attempt++;
+                }
+
+                if (!analogs) {
+                    throw new Error('Не удалось получить результаты вовремя');
+                }
+
+                statusMsg.textContent = `Найдено совпадений: ${analogs.length}`;
+                renderResults(analogs);
+
+            } catch (err) {
+                console.error(err);
+                statusMsg.textContent = `Ошибка: ${err.message}`;
+            } finally {
+                btn.disabled = false;
+                loader.style.display = 'none';
+            }
+        }
+
+        function renderResults(analogs) {
+            const resultsDiv = document.getElementById('results');
+            
+            if (analogs.length === 0) {
+                resultsDiv.innerHTML = '<div style="text-align:center; padding: 2rem;">Ничего не найдено</div>';
+                return;
+            }
+
+            analogs.forEach(item => {
+                const card = document.createElement('div');
+                card.className = 'result-card';
+                
+                const scorePercent = item.cosine_score ? (item.cosine_score * 100).toFixed(1) : 0;
+                
+                // Рендер характеристик (первые 5 чтобы не загромождать)
+                // In some API responses, item might wrap the data differently depending on the schema
+                const attributesObj = item.attributes || {};
+                const attrs = Object.entries(attributesObj).slice(0, 8);
+                const attrsHtml = attrs.length ? `
+                    <div class="attributes">
+                        ${attrs.map(([k, v]) => `<div class="attr-item"><b>${k}:</b> ${v}</div>`).join('')}
+                    </div>
+                ` : '';
+
+                card.innerHTML = `
+                    <div class="result-header">
+                        <div class="result-title">${item.name}</div>
+                        <div class="score-badge">Сходство: ${scorePercent}%</div>
+                    </div>
+                    <div class="result-meta">
+                        ID: ${item.cte_id} | Категория: ${item.category || 'Не указана'}
+                    </div>
+                    ${attrsHtml}
+                `;
+                
+                resultsDiv.appendChild(card);
+            });
+        }
+    </script>
+</body>
+</html>

@@ -1,10 +1,12 @@
 """FastAPI application entry point with async lifespan for data loading."""
 
 import logging
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from qdrant_client import QdrantClient
 
 from src.config import settings
@@ -107,6 +109,9 @@ app.add_middleware(
 )
 
 app.include_router(router)
+
+os.makedirs("static", exist_ok=True)
+app.mount("/ui", StaticFiles(directory="static", html=True), name="static")
 
 
 @app.get("/health")

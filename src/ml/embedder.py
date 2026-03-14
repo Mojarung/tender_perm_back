@@ -5,21 +5,15 @@ from openai import OpenAI
 logger = logging.getLogger(__name__)
 
 class Embedder:
-    """Wraps PPLX API for pplx-embed-v1-0.6b (1024-dim)."""
-
     def __init__(self, model_name: str = "perplexity-ai/pplx-embed-v1-0.6b"):
         logger.info("Initializing Local Perplexity Embedder: %s", model_name)
         self.api_key = "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"
         self.base_url = "https://integrate.api.nvidia.com/v1"
         self.client = OpenAI(api_key=self.api_key, base_url=self.base_url)
-        self.model = model_name
+        self.model = "nvidia/llama-nemotron-embed-1b-v2"
         logger.info("Local Perplexity Embedder ready (dim=1024)")
 
     def encode(self, texts: list[str]) -> np.ndarray:
-        """
-        Encode texts into embeddings using NVIDIA API.
-        Truncates to 1024 to match existing collection.
-        """
         if not texts:
             return np.array([])
 

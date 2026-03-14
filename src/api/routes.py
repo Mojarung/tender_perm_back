@@ -107,7 +107,14 @@ async def get_session_status(session_id: str):
 
         step = values.get("current_step", "unknown")
         if next_nodes:
-            step = f"waiting_at_{next_nodes[0]}" if next_nodes else step
+            # Handle user interaction steps
+            node = next_nodes[0]
+            if node == "wait_for_analogs":
+                step = "waiting_for_analog_approval"
+            elif node == "process_prices":
+                step = "waiting_for_price_approval"
+            else:
+                step = f"waiting_at_{node}"
 
         return SessionStatus(
             session_id=session_id,
