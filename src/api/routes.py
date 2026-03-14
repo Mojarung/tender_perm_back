@@ -196,6 +196,75 @@ async def approve_analogs(session_id: str, request: AnalogApprovalRequest):
     )
 
 
+@router.post("/session/{session_id}/analogs/reapprove", response_model=SessionStatus)
+async def reapprove_analogs(session_id: str, request: AnalogApprovalRequest):
+    """
+    Re-approve analog selection and force the pipeline to rerun price processing.
+    """
+    config = _get_config(session_id)
+    try:
+        state = _graph.get_state(config)
+        values = state.values
+        ranked = values.get("retrieved_analogs", [])
+        
+        approved_ids = request.approved_analog_ids
+        manual_ids = request.manual_cte_ids
+        
+        approved = [a for a in ranked if a["cte_id"] in approved_ids]
+        
+        import src.graph.nodes as nodes
+        
+        for mid in manual_ids:
+            item = nodes._cte_repo.get_item_by_id(mid)
+            if item:
+                approved.append({
+                    "cte_id": item["Идентификатор СТЕ"],
+                    "name": item["Наименование СТЕ"],
+                    "category": item.get("Категория", ""),
+                    "manufacturer": item.get("Производитель", ""),
+                    "attributes": item.get("_attributes", {}),
+                    "cosine_score": 0.0,
+                    "attribute_overlap": 0.0,
+                    "final_score": 0.0,
+                    "match_reason": "Добавлено вручную пользователем",
+                })
+                
+        state_update = {
+            "user_approved_analogs": approved,
+            "raw_prices": [],
+            "filtered_prices": [],
+            "outlier_prices": [],
+            "user_approved_prices": [],
+            "current_step": "analogs_approved",
+            "error": None
+        }
+        
+        logger.info(
+            "Session %s: RE-approving %d analogs (+%d manual), rewinding to wait_for_analogs",
+            session_id,
+            len(approved_ids),
+            len(manual_ids),
+        )
+        
+        _graph.update_state(config, state_update, as_node="wait_for_analogs")
+        result = _graph.invoke(None, config)
+        
+        interrupts = result.get("__interrupt__", [])
+        if interrupts:
+            return SessionStatus(
+                session_id=session_id,
+                current_step="waiting_for_price_approval",
+            )
+            
+        return SessionStatus(
+            session_id=session_id,
+            current_step=result.get("current_step", "unknown"),
+            error=result.get("error"),
+        )
+    except Exception as e:
+        logger.error("Error in reapprove_analogs: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
 # ── Price Review & Approval ──
 
 
@@ -234,6 +303,7 @@ async def get_prices(session_id: str):
                 contract_id=p.get("Идентификатор контракта", 0),
                 procurement_method=p.get("Способ закупки", ""),
                 is_outlier=is_outlier,
+                outlier_reason=p.get("_outlier_reason", None),
                 time_weight=p.get("time_weight", 1.0),
             )
 

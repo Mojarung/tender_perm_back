@@ -71,6 +71,7 @@ class PriceResult(BaseModel):
     contract_id: int
     procurement_method: str
     is_outlier: bool = False
+    outlier_reason: str | None = None
     time_weight: float = 1.0
 
 

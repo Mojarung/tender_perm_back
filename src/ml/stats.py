@@ -76,16 +76,24 @@ def analyze_prices(
         df_prices.height,
     )
 
-    # If all were marked as outliers (rare edge case), use all data
-    if valid_df.height == 0:
-        logger.warning("All prices marked as outliers — using full dataset")
-        valid_df = df_prices
-        outliers_df = pl.DataFrame()
-
     # ── Step 2: Calculate statistics on valid prices ──
     median_val = float(valid_df.select(pl.col(price_col).median()).item() or 0)
     mean_val = float(valid_df.select(pl.col(price_col).mean()).item() or 0)
     std_val = float(valid_df.select(pl.col(price_col).std()).item() or 0)
+
+    # Assign reasons to outliers based on median
+    if outliers_df.height > 0 and median_val > 0:
+        outliers_dicts = outliers_df.to_dicts()
+        for idx, row in enumerate(outliers_dicts):
+            price = row.get(price_col, 0)
+            if price > median_val:
+                diff_percent = ((price - median_val) / median_val) * 100
+                outliers_dicts[idx]["_outlier_reason"] = f"Цена значительно выше медианной (+{diff_percent:.0f}%)"
+            else:
+                diff_percent = ((median_val - price) / median_val) * 100
+                outliers_dicts[idx]["_outlier_reason"] = f"Цена значительно ниже медианной (-{diff_percent:.0f}%)"
+    else:
+        outliers_dicts = outliers_df.to_dicts() if outliers_df.height > 0 else []
 
     cv = (std_val / mean_val * 100) if mean_val > 0 else 0.0
 
@@ -106,7 +114,7 @@ def analyze_prices(
 
     return PriceAnalysisResult(
         valid_prices=valid_df.to_dicts(),
-        outlier_prices=outliers_df.to_dicts() if outliers_df.height > 0 else [],
+        outlier_prices=outliers_dicts,
         median=round(median_val, 2),
         mean=round(mean_val, 2),
         weighted_average=round(weighted_avg, 2),
