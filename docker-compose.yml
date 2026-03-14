@@ -1,0 +1,28 @@
+services:
+  api:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - QDRANT_HOST=qdrant
+      - QDRANT_PORT=6333
+      - EMBEDDING_MODEL=perplexity-ai/pplx-embed-v1-0.6b
+      - TRANSFORMERS_OFFLINE=1
+      - CTE_JSON_PATH=/app/data/cte.json
+      - CONTRACTS_JSON_PATH=/app/data/contracts.json
+    volumes:
+      - ./data:/app/data
+      - ./output:/app/output
+    depends_on:
+      qdrant:
+        condition: service_started
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    ports:
+      - "6333:6333"
+    volumes:
+      - qdrant_storage:/qdrant/storage
+
+volumes:
+  qdrant_storage:

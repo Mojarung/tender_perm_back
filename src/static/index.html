@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Калькулятор НМЦК</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f5f5f5; color: #333; }
+.container { max-width: 900px; margin: 0 auto; padding: 20px; }
+h1 { text-align: center; margin: 20px 0; color: #1a237e; font-size: 24px; }
+.steps { display: flex; gap: 4px; margin-bottom: 24px; }
+.step { flex: 1; text-align: center; padding: 10px 4px; background: #e0e0e0; border-radius: 6px; font-size: 13px; color: #888; transition: all 0.2s; }
+.step.active { background: #1a237e; color: #fff; font-weight: 600; }
+.step.done { background: #4caf50; color: #fff; }
+.card { background: #fff; border-radius: 10px; padding: 24px; margin-bottom: 16px; box-shadow: 0 1px 4px rgba(0,0,0,0.08); }
+.card h2 { font-size: 18px; margin-bottom: 16px; color: #1a237e; }
+label { display: block; font-size: 13px; color: #666; margin-bottom: 4px; margin-top: 12px; }
+input, select { width: 100%; padding: 10px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 15px; }
+input:focus, select:focus { outline: none; border-color: #1a237e; }
+.search-results { border: 1px solid #eee; border-radius: 6px; max-height: 200px; overflow-y: auto; }
+.search-item { padding: 10px 12px; cursor: pointer; border-bottom: 1px solid #f5f5f5; font-size: 14px; }
+.search-item:hover { background: #e3f2fd; }
+.search-item small { color: #888; }
+.btn { padding: 12px 28px; border: none; border-radius: 6px; font-size: 15px; cursor: pointer; font-weight: 600; transition: all 0.15s; }
+.btn-primary { background: #1a237e; color: #fff; }
+.btn-primary:hover { background: #283593; }
+.btn-secondary { background: #e0e0e0; color: #333; }
+.btn-secondary:hover { background: #bdbdbd; }
+.btn-sm { padding: 6px 14px; font-size: 13px; }
+.btn-row { display: flex; gap: 10px; margin-top: 20px; justify-content: flex-end; }
+.form-row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
+table { width: 100%; border-collapse: collapse; font-size: 14px; }
+th { text-align: left; padding: 10px 8px; background: #f5f5f5; font-weight: 600; color: #555; border-bottom: 2px solid #e0e0e0; }
+td { padding: 10px 8px; border-bottom: 1px solid #f0f0f0; }
+tr:hover { background: #fafafa; }
+tr.outlier { background: #fff3e0; color: #bf360c; }
+.badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 600; }
+.badge-exact { background: #c8e6c9; color: #1b5e20; }
+.badge-category { background: #e3f2fd; color: #0d47a1; }
+.badge-semantic { background: #f3e5f5; color: #4a148c; }
+.result-box { text-align: center; padding: 24px; }
+.result-box .nmcc { font-size: 36px; font-weight: 700; color: #1a237e; margin: 12px 0; }
+.result-box .detail { font-size: 15px; color: #666; margin: 4px 0; }
+.cv-ok { color: #2e7d32; }
+.cv-warn { color: #e65100; }
+.warning { background: #fff3e0; border-left: 4px solid #e65100; padding: 12px 16px; border-radius: 4px; margin: 12px 0; font-size: 14px; }
+.info { background: #e3f2fd; border-left: 4px solid #1565c0; padding: 12px 16px; border-radius: 4px; margin: 12px 0; font-size: 14px; }
+.hidden { display: none; }
+.loading { text-align: center; padding: 40px; color: #888; }
+.score-bar { display: inline-block; height: 6px; border-radius: 3px; background: #e0e0e0; width: 60px; vertical-align: middle; margin-left: 6px; }
+.score-fill { height: 100%; border-radius: 3px; background: #4caf50; }
+.manual-row { display: flex; gap: 8px; margin-top: 8px; }
+.manual-row input { flex: 1; }
+</style>
+</head>
+<body>
+<div class="container">
+    <h1>Калькулятор НМЦК</h1>
+
+    <div class="steps">
+        <div class="step" id="step-1">1. Товар</div>
+        <div class="step" id="step-2">2. Аналоги</div>
+        <div class="step" id="step-3">3. Цены</div>
+        <div class="step" id="step-4">4. Результат</div>
+    </div>
+
+    <!-- Step 1: Input -->
+    <div id="screen-1" class="card">
+        <h2>Поиск товара</h2>
+        <label>Название товара</label>
+        <input type="text" id="search-input" placeholder="Начните вводить название..." autocomplete="off">
+        <div id="search-results" class="search-results hidden"></div>
+        <div id="selected-item" class="info hidden"></div>
+
+        <div class="form-row">
+            <div>
+                <label>Количество</label>
+                <input type="number" id="quantity" value="100" min="1">
+            </div>
+            <div>
+                <label>Единица измерения</label>
+                <select id="unit">
+                    <option value="шт">шт</option>
+                    <option value="упак">упак</option>
+                    <option value="кг">кг</option>
+                    <option value="пар">пар</option>
+                    <option value="набор">набор</option>
+                    <option value="компл">компл</option>
+                    <option value="м">м</option>
+                    <option value="рул">рул</option>
+                </select>
+            </div>
+            <div>
+                <label>Регион</label>
+                <select id="region"><option value="">Все регионы</option></select>
+            </div>
+        </div>
+
+        <div class="btn-row">
+            <button class="btn btn-primary" onclick="createSession()">Найти аналоги</button>
+        </div>
+    </div>
+
+    <!-- Step 2: Analogs -->
+    <div id="screen-2" class="card hidden">
+        <h2>Найденные аналоги</h2>
+        <p id="analogs-info" style="margin-bottom:12px;color:#666;font-size:14px;"></p>
+        <table>
+            <thead><tr>
+                <th style="width:30px;"></th>
+                <th>Название</th>
+                <th>Категория</th>
+                <th>Источник</th>
+                <th>Score</th>
+            </tr></thead>
+            <tbody id="analogs-table"></tbody>
+        </table>
+        <div class="btn-row">
+            <button class="btn btn-secondary" onclick="goToStep(1)">Назад</button>
+            <button class="btn btn-primary" onclick="approveAnalogs()">Подтвердить выбранные</button>
+        </div>
+    </div>
+
+    <!-- Step 3: Prices -->
+    <div id="screen-3" class="card hidden">
+        <h2>Цены из контрактов</h2>
+        <div id="prices-info"></div>
+        <table>
+            <thead><tr>
+                <th style="width:30px;"></th>
+                <th>Товар</th>
+                <th>Цена</th>
+                <th>Регион</th>
+                <th>Дата</th>
+                <th>kd</th>
+            </tr></thead>
+            <tbody id="prices-table"></tbody>
+        </table>
+        <div id="outlier-info" class="hidden"></div>
+
+        <div style="margin-top:16px;">
+            <button class="btn btn-sm btn-secondary" onclick="toggleManual()">+ Добавить цену вручную</button>
+            <div id="manual-section" class="hidden" style="margin-top:8px;">
+                <div class="manual-row">
+                    <input type="number" id="manual-price" placeholder="Цена (руб)" step="0.01" min="0.01">
+                    <input type="text" id="manual-desc" placeholder="Источник (например: КП ООО Рога)">
+                    <button class="btn btn-sm btn-primary" onclick="addManualPrice()">Добавить</button>
+                </div>
+                <div id="manual-list" style="margin-top:8px;font-size:13px;"></div>
+            </div>
+        </div>
+
+        <div class="btn-row">
+            <button class="btn btn-secondary" onclick="goBack('analogs')">Назад к аналогам</button>
+            <button class="btn btn-primary" onclick="approvePrices()">Рассчитать НМЦК</button>
+        </div>
+    </div>
+
+    <!-- Step 4: Result -->
+    <div id="screen-4" class="card hidden">
+        <h2>Результат расчёта НМЦК</h2>
+        <div class="result-box">
+            <div class="detail">Метод сопоставимых рыночных цен (Приказ 567)</div>
+            <div class="nmcc" id="result-nmcc"></div>
+            <div class="detail" id="result-formula"></div>
+            <div style="margin-top:16px;">
+                <div class="detail" id="result-cv"></div>
+                <div class="detail" id="result-sigma"></div>
+                <div class="detail" id="result-count"></div>
+            </div>
+            <div id="result-warning"></div>
+        </div>
+        <div class="btn-row">
+            <button class="btn btn-secondary" onclick="goBack('analogs')">Назад к аналогам</button>
+            <button class="btn btn-secondary" onclick="goBack('prices')">Назад к ценам</button>
+        </div>
+    </div>
+</div>
+
+<script>
+const API = '';
+let state = { sessionId: null, selectedCte: null, validPrices: [], manualPrices: [] };
+let searchTimeout = null;
+
+// Load regions
+fetch(API + '/api/regions').then(r => r.json()).then(regions => {
+    const sel = document.getElementById('region');
+    regions.forEach(r => { const o = document.createElement('option'); o.value = r; o.textContent = r; sel.appendChild(o); });
+});
+
+// Search
+document.getElementById('search-input').addEventListener('input', function() {
+    clearTimeout(searchTimeout);
+    const q = this.value.trim();
+    if (q.length < 2) { document.getElementById('search-results').classList.add('hidden'); return; }
+    searchTimeout = setTimeout(() => {
+        fetch(API + '/api/cte/search?q=' + encodeURIComponent(q) + '&limit=10')
+            .then(r => r.json())
+            .then(items => {
+                const div = document.getElementById('search-results');
+                if (items.length === 0) { div.classList.add('hidden'); return; }
+                div.innerHTML = items.map(it =>
+                    `<div class="search-item" onclick="selectCte(${it.cte_id}, '${esc(it.name)}', '${esc(it.category)}')">
+                        <div>${it.name}</div>
+                        <small>${it.category} | ${it.manufacturer}</small>
+                    </div>`
+                ).join('');
+                div.classList.remove('hidden');
+            });
+    }, 300);
+});
+
+function esc(s) { return s.replace(/'/g, "\\'").replace(/"/g, '&quot;'); }
+
+function selectCte(id, name, cat) {
+    state.selectedCte = { cte_id: id, name, category: cat };
+    document.getElementById('search-input').value = name;
+    document.getElementById('search-results').classList.add('hidden');
+    document.getElementById('selected-item').innerHTML = `<b>${name}</b> | ${cat} | ID: ${id}`;
+    document.getElementById('selected-item').classList.remove('hidden');
+}
+
+function setStep(n) {
+    for (let i = 1; i <= 4; i++) {
+        document.getElementById('step-' + i).className = 'step' + (i === n ? ' active' : i < n ? ' done' : '');
+        document.getElementById('screen-' + i).classList.toggle('hidden', i !== n);
+    }
+}
+
+function goToStep(n) { setStep(n); }
+
+// Step 1 -> 2
+async function createSession() {
+    if (!state.selectedCte) { alert('Выберите товар из списка'); return; }
+    const body = {
+        target_cte_name: state.selectedCte.name,
+        target_cte_id: state.selectedCte.cte_id,
+        target_quantity: parseFloat(document.getElementById('quantity').value) || 1,
+        target_unit: document.getElementById('unit').value,
+        target_region: document.getElementById('region').value || null,
+    };
+    const r = await fetch(API + '/api/sessions', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body) });
+    const data = await r.json();
+    state.sessionId = data.session_id;
+    state.manualPrices = [];
+    renderAnalogs(data.found_analogs);
+    setStep(2);
+}
+
+function renderAnalogs(analogs) {
+    document.getElementById('analogs-info').textContent = `Найдено ${analogs.length} аналогов для "${state.selectedCte.name}"`;
+    const tbody = document.getElementById('analogs-table');
+    tbody.innerHTML = analogs.map((a, i) => {
+        const badge = `<span class="badge badge-${a.source}">${a.source}</span>`;
+        const pct = Math.round(a.combined_score * 100);
+        return `<tr>
+            <td><input type="checkbox" class="analog-cb" value="${a.cte_id}" ${i < 5 ? 'checked' : ''}></td>
+            <td>${a.name}</td>
+            <td style="font-size:12px;color:#888;">${a.category}</td>
+            <td>${badge}</td>
+            <td>${pct}%<div class="score-bar"><div class="score-fill" style="width:${pct}%"></div></div></td>
+        </tr>`;
+    }).join('');
+}
+
+// Step 2 -> 3
+async function approveAnalogs() {
+    const ids = [...document.querySelectorAll('.analog-cb:checked')].map(cb => parseInt(cb.value));
+    if (ids.length === 0) { alert('Выберите хотя бы один аналог'); return; }
+    const r = await fetch(API + `/api/sessions/${state.sessionId}/approve-analogs`, {
+        method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ approved_cte_ids: ids })
+    });
+    const data = await r.json();
+    state.validPrices = data.valid_prices;
+    renderPrices(data);
+    setStep(3);
+}
+
+function renderPrices(data) {
+    let infoHtml = '';
+    if (data.region_fallback_used) {
+        infoHtml += '<div class="warning">Недостаточно цен в выбранном регионе. Показаны цены из всех регионов.</div>';
+    }
+    infoHtml += `<div class="info">Найдено ${data.all_prices.length} цен, после фильтрации: ${data.valid_prices.length}</div>`;
+    document.getElementById('prices-info').innerHTML = infoHtml;
+
+    const tbody = document.getElementById('prices-table');
+    tbody.innerHTML = data.valid_prices.map((p, i) =>
+        `<tr>
+            <td><input type="checkbox" class="price-cb" data-index="${i}" checked></td>
+            <td style="max-width:250px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${p.cte_name}</td>
+            <td><b>${p.price_adjusted.toFixed(2)}</b> руб</td>
+            <td style="font-size:12px;">${p.region}${p.is_regional ? '' : ' *'}</td>
+            <td style="font-size:12px;">${p.date}</td>
+            <td style="font-size:12px;">${p.kd === 1.0 ? '—' : p.kd.toFixed(2)}</td>
+        </tr>`
+    ).join('');
+
+    if (data.outlier_prices.length > 0) {
+        const oDiv = document.getElementById('outlier-info');
+        oDiv.className = 'warning';
+        oDiv.innerHTML = `<b>Отсечено ${data.outlier_prices.length} выбросов.</b> ${data.outlier_justification}`;
+    }
+}
+
+function toggleManual() { document.getElementById('manual-section').classList.toggle('hidden'); }
+
+function addManualPrice() {
+    const price = parseFloat(document.getElementById('manual-price').value);
+    const desc = document.getElementById('manual-desc').value || 'Ручной ввод';
+    if (!price || price <= 0) { alert('Введите корректную цену'); return; }
+    state.manualPrices.push({ price, source_description: desc });
+    document.getElementById('manual-list').innerHTML = state.manualPrices.map((mp, i) =>
+        `<div>${mp.source_description}: <b>${mp.price.toFixed(2)} руб</b></div>`
+    ).join('');
+    document.getElementById('manual-price').value = '';
+    document.getElementById('manual-desc').value = '';
+}
+
+// Step 3 -> 4
+async function approvePrices() {
+    const indices = [...document.querySelectorAll('.price-cb:checked')].map(cb => parseInt(cb.dataset.index));
+    if (indices.length === 0 && state.manualPrices.length === 0) { alert('Выберите хотя бы одну цену'); return; }
+    const r = await fetch(API + `/api/sessions/${state.sessionId}/approve-prices`, {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ approved_price_indices: indices, manual_prices: state.manualPrices })
+    });
+    const data = await r.json();
+    renderResult(data.nmcc_result);
+    setStep(4);
+}
+
+function renderResult(r) {
+    document.getElementById('result-nmcc').textContent = r.nmcc.toLocaleString('ru-RU', {minimumFractionDigits: 2}) + ' руб';
+    document.getElementById('result-formula').textContent = `${r.mean_price.toFixed(2)} руб × ${r.quantity} = ${r.nmcc.toFixed(2)} руб`;
+    const cvClass = r.is_homogeneous ? 'cv-ok' : 'cv-warn';
+    document.getElementById('result-cv').innerHTML = `Коэффициент вариации: <b class="${cvClass}">${r.cv_percent}%</b> ${r.is_homogeneous ? '✓ однородна' : '⚠ неоднородна'}`;
+    document.getElementById('result-sigma').textContent = `Среднеквадратичное отклонение: ${r.sigma} руб`;
+    document.getElementById('result-count').textContent = `Использовано источников: ${r.prices_used}`;
+    document.getElementById('result-warning').innerHTML = r.is_homogeneous ? '' :
+        '<div class="warning" style="margin-top:16px;">Коэффициент вариации превышает 33%. Рекомендуется пересмотреть выборку аналогов или убрать выбросы.</div>';
+}
+
+async function goBack(target) {
+    await fetch(API + `/api/sessions/${state.sessionId}/go-back`, {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ target_step: target })
+    });
+    setStep(target === 'analogs' ? 2 : 3);
+}
+
+setStep(1);
+</script>
+</body>
+</html>
