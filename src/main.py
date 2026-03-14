@@ -42,7 +42,11 @@ async def lifespan(app: FastAPI):
     embedder = Embedder(model_name=settings.embedding_model)
 
     # 2. Connect to Qdrant
-    logger.info("Step 2/5: Connecting to Qdrant at %s:%d ...", settings.qdrant_host, settings.qdrant_port)
+    logger.info(
+        "Step 2/5: Connecting to Qdrant at %s:%d ...",
+        settings.qdrant_host,
+        settings.qdrant_port,
+    )
     qdrant_client = QdrantClient(
         host=settings.qdrant_host,
         port=settings.qdrant_port,

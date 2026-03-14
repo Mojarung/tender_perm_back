@@ -55,12 +55,15 @@ class CTERepository:
         self._items: list[dict[str, Any]] = []
         self._id_to_item: dict[int, dict[str, Any]] = {}
 
-    def load_cte_data(self, file_path: Path) -> list[dict[str, Any]]:
-        """Load cte.json and preprocess characteristics."""
+    def load_cte_data(self, file_path: Path, max_items: int = 0) -> list[dict[str, Any]]:
+        """Load cte.json and preprocess characteristics. max_items=0 means all."""
         logger.info("Loading CTE catalog from %s ...", file_path)
         with open(file_path, "r", encoding="utf-8") as f:
             raw = json.load(f)
-        logger.info("Loaded %d CTE items", len(raw))
+        logger.info("Raw JSON loaded: %d total CTE items", len(raw))
+        if max_items > 0:
+            raw = raw[:max_items]
+            logger.info("LIMITED to %d items for fast startup", max_items)
 
         self._items = []
         for item in raw:
@@ -69,9 +72,7 @@ class CTERepository:
                 "Наименование СТЕ": item["Наименование СТЕ"],
                 "Категория": item.get("Категория", ""),
                 "Производитель": item.get("Производитель", ""),
-                "_attributes": _chars_to_dict(
-                    item.get("характеристики СТЕ", [])
-                ),
+                "_attributes": _chars_to_dict(item.get("характеристики СТЕ", [])),
             }
             self._items.append(processed)
             self._id_to_item[processed["Идентификатор СТЕ"]] = processed
@@ -122,22 +123,21 @@ class CTERepository:
             logger.info("Collection already has data, skipping upsert")
             return
 
-        logger.info("Embedding %d CTE items ...", len(self._items))
+        total = len(self._items)
+        logger.info("Starting embedding of %d CTE items ...", total)
 
         texts = [_build_embedding_text(item) for item in self._items]
 
-        # Embed in batches to manage memory
+        # Embed in batches
         all_embeddings = []
-        batch_size = 64
+        batch_size = 256
+        num_batches = (len(texts) + batch_size - 1) // batch_size
         for i in range(0, len(texts), batch_size):
             batch_texts = texts[i : i + batch_size]
             batch_embeddings = embedder.encode(batch_texts)
             all_embeddings.append(batch_embeddings)
-            logger.info(
-                "Embedded batch %d/%d",
-                i // batch_size + 1,
-                (len(texts) + batch_size - 1) // batch_size,
-            )
+            done = min(i + batch_size, total)
+            logger.info("[Embedding] %d / %d done (batch %d/%d)", done, total, i // batch_size + 1, num_batches)
 
         embeddings = np.vstack(all_embeddings)
 

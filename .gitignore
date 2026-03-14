@@ -209,3 +209,5 @@ __marimo__/
 *pdf
 *json
 model_weights/
+*dat
+qdrant_storage/
