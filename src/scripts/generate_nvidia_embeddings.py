@@ -14,15 +14,15 @@ from src.data_access.cte_repo import CTERepository
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
 
-class NvidiaEmbedder:
-    """Wrapper for NVIDIA API to integrate with CTERepository"""
+class PplxEmbedder:
+    """Wrapper for local PPLX API to integrate with CTERepository"""
     
-    def __init__(self, api_key: str, base_url: str = "https://integrate.api.nvidia.com/v1", model: str = "nvidia/llama-nemotron-embed-1b-v2"):
+    def __init__(self, api_key: str, base_url: str = "https://integrate.api.nvidia.com/v1", model: str = "perplexity-ai/pplx-embed-v1-0.6b"):
         self.client = OpenAI(api_key=api_key, base_url=base_url)
         self.model = model
 
     def encode(self, texts: list[str]) -> np.ndarray:
-        """Encode texts into embeddings using NVIDIA API"""
+        """Encode texts into embeddings using local model"""
         if not texts:
             return np.array([])
         
@@ -40,7 +40,7 @@ class NvidiaEmbedder:
             embeddings = [item.embedding for item in sorted(response.data, key=lambda x: x.index)]
             return np.array(embeddings)
         except Exception as e:
-            logger.error(f"Error generating embeddings via NVIDIA API: {e}")
+            logger.error(f"Error generating embeddings via local PPLX: {e}")
             raise
 
 
@@ -67,8 +67,8 @@ def main():
     # API key from prompt
     api_key = "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"
     
-    logger.info("Initializing NVIDIA Embedder with truncation to match existing collection...")
-    embedder = NvidiaEmbedder(api_key=api_key)
+    logger.info("Initializing Local Perplexity Embedder with truncation to match existing collection...")
+    embedder = PplxEmbedder(api_key=api_key)
     
     # Initialize Qdrant Client
     logger.info(f"Connecting to Qdrant at {qdrant_host}:{qdrant_port}")
