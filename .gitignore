@@ -211,3 +211,4 @@ __marimo__/
 model_weights/
 *dat
 qdrant_storage/
+*rar

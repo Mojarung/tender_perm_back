@@ -195,14 +195,13 @@ class CTERepository:
                 ]
             )
 
-        results = self.client.search(
+        results = self.client.query_points(
             collection_name=self.collection_name,
-            query_vector=query_vector,
+            query=query_vector,
             query_filter=query_filter,
             limit=limit,
-            score_threshold=score_threshold,
             with_payload=True,
-        )
+        ).points
 
         search_results = []
         for hit in results:
@@ -214,7 +213,7 @@ class CTERepository:
                     "category": payload.get("category", ""),
                     "manufacturer": payload.get("manufacturer", ""),
                     "attributes": payload.get("attributes", {}),
-                    "cosine_score": round(hit.score, 4),
+                    "cosine_score": round(hit.score if hasattr(hit, "score") and hit.score is not None else 0.0, 4),
                 }
             )
 

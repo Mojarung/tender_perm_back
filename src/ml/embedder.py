@@ -1,36 +1,42 @@
-"""Embedding service using sentence-transformers with pplx-embed model."""
-
 import logging
-
 import numpy as np
-from sentence_transformers import SentenceTransformer
+from openai import OpenAI
 
 logger = logging.getLogger(__name__)
 
-
 class Embedder:
-    """Wraps sentence-transformers for pplx-embed-v1-0.6b (1024-dim)."""
+    """Wraps NVIDIA API for llama-nemotron-embed-1b-v2 (1024-dim truncated)."""
 
-    def __init__(self, model_name: str = "perplexity-ai/pplx-embed-v1-0.6b"):
-        logger.info("Loading embedding model: %s", model_name)
-        self.model = SentenceTransformer(model_name, trust_remote_code=True)
-        logger.info("Embedding model loaded (dim=%d)", self.model.get_sentence_embedding_dimension())
+    def __init__(self, model_name: str = "nvidia/llama-nemotron-embed-1b-v2"):
+        logger.info("Initializing NVIDIA Embedder: %s", model_name)
+        # Using the same key/url as in our generation script
+        self.api_key = "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"
+        self.base_url = "https://integrate.api.nvidia.com/v1"
+        self.client = OpenAI(api_key=self.api_key, base_url=self.base_url)
+        self.model = model_name
+        logger.info("NVIDIA Embedder ready (target dim=1024)")
 
     def encode(self, texts: list[str]) -> np.ndarray:
         """
-        Encode texts into embeddings.
-
-        Returns numpy array of shape (len(texts), 1024).
+        Encode texts into embeddings using NVIDIA API.
+        Truncates to 1024 to match existing collection.
         """
         if not texts:
             return np.array([])
 
-        embeddings = self.model.encode(
-            texts,
-            show_progress_bar=False,
-            convert_to_numpy=True,
-        )
-        return embeddings
+        try:
+            response = self.client.embeddings.create(
+                input=texts,
+                model=self.model,
+                encoding_format="float",
+                extra_body={"input_type": "query", "truncate": "END", "dimensions": 1024}
+            )
+            # Extracted embeddings sorted by original index
+            embeddings = [item.embedding for item in sorted(response.data, key=lambda x: x.index)]
+            return np.array(embeddings)
+        except Exception as e:
+            logger.error(f"Error encoding with NVIDIA: {e}")
+            return np.zeros((len(texts), 1024))
 
     def encode_single(self, text: str) -> list[float]:
         """Encode a single text and return as list of floats."""
