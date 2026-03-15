@@ -58,10 +58,15 @@ def analyze_prices(
         )
 
     # ── Step 1: IsolationForest outlier detection ──
-    prices_array = df_prices.select(price_col).to_numpy().reshape(-1, 1)
-
-    clf = IsolationForest(random_state=42, contamination="auto")
-    predictions = clf.fit_predict(prices_array)
+    # Skip if all prices are identical, as IsolationForest might mark them all as outliers
+    unique_prices_count = df_prices.select(pl.col(price_col).n_unique()).item()
+    
+    if unique_prices_count <= 1:
+        predictions = np.ones(df_prices.height, dtype=np.int32)
+    else:
+        prices_array = df_prices.select(price_col).to_numpy().reshape(-1, 1)
+        clf = IsolationForest(random_state=42, contamination="auto")
+        predictions = clf.fit_predict(prices_array)
 
     df_with_preds = df_prices.with_columns(
         pl.Series(name="_is_inlier", values=predictions)
