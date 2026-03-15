@@ -159,15 +159,10 @@ def generate_nmck_document(
 
     # ── 1. Title ─────────────────────────────────────────────────────────
     _add_styled_paragraph(
-        doc, "ОБОСНОВАНИЕ", bold=True, size=Pt(14),
-        alignment=WD_ALIGN_PARAGRAPH.CENTER,
-    )
-    _add_styled_paragraph(
-        doc,
-        "начальной (максимальной) цены контракта",
+        doc, "ОБОСНОВАНИЕ\nначальной (максимальной) цены контракта",
         bold=True, size=Pt(14),
         alignment=WD_ALIGN_PARAGRAPH.CENTER,
-        space_after=Pt(6),
+        space_after=Pt(12),
     )
     _add_styled_paragraph(
         doc,
@@ -276,7 +271,8 @@ def generate_nmck_document(
             src_text = "Ручной ввод"
         else:
             cid = p.get("Идентификатор контракта", p.get("contract_id", ""))
-            src_text = f"Контракт № {cid}"
+            cdate = _format_date(p.get("Дата заключения контракта", p.get("contract_date")))
+            src_text = f"Контракт № {cid} от {cdate}"
 
         _set_cell_text(row.cells[0], str(i + 1), alignment=WD_ALIGN_PARAGRAPH.CENTER)
         _set_cell_text(row.cells[1], src_text)
@@ -538,7 +534,12 @@ def generate_consolidated_document(
             adjusted = raw_price * tw
 
             source = p.get("_source")
-            src_text = "Ручной ввод" if source == "manual" else f"Контракт № {p.get('Идентификатор контракта', p.get('contract_id', ''))}"
+            if source == "manual":
+                src_text = "Ручной ввод"
+            else:
+                cid = p.get("Идентификатор контракта", p.get("contract_id", ""))
+                cdate = _format_date(p.get("Дата заключения контракта", p.get("contract_date")))
+                src_text = f"Контракт № {cid} от {cdate}"
 
             _set_cell_text(row.cells[0], str(pi + 1), alignment=WD_ALIGN_PARAGRAPH.CENTER)
             _set_cell_text(row.cells[1], src_text)
