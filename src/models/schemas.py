@@ -225,3 +225,42 @@ class PurchaseSummaryBoard(BaseModel):
     items: list[ItemSummary]
     any_non_homogeneous: bool
     average_cv: float
+
+
+# ── Catalog models ─────────────────────────────────────────────────
+
+
+class CTESearchResultItem(BaseModel):
+    id: int
+    name: str
+    category: str
+    manufacturer: str
+    characteristics: list[list[str]]
+    contract_count: int = 0
+    regions: list[str] = Field(default_factory=list)
+    unique_suppliers: int = 0
+    cosine_score: float | None = None
+
+
+class CTEPriceInfo(BaseModel):
+    date: str
+    price: float
+    quantity: float
+    unit: str
+    region: str
+    supplier_inn: int
+    contract_id: int
+    procurement_method: str
+
+
+class CTEPriceAnalytics(BaseModel):
+    cte_id: int
+    cte_name: str
+    prices: list[CTEPriceInfo]
+    avg_price: float
+    median_price: float
+    min_price: float
+    max_price: float
+    total_contracts: int
+    region_stats: list[RegionPriceStat]
+    available_units: list[str]

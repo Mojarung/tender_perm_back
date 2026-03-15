@@ -28,6 +28,9 @@ from src.models.schemas import (
     CalculationSummary,
     ItemSummary,
     PurchaseSummaryBoard,
+    CTESearchResultItem,
+    CTEPriceInfo,
+    CTEPriceAnalytics,
 )
 from src.data_access.history_repo import HistoryRepository
 from src.services.num_to_words_ru import number_to_words_ru
@@ -212,8 +215,8 @@ async def check_cte(cte_id: int):
 
 
 @router.get("/cte/search")
-async def search_cte(q: str = "", limit: int = 10):
-    """Search CTE catalog by ID (exact) or by name/category (substring + vector)."""
+async def search_cte(q: str = "", limit: int = 20):
+    """Search CTE catalog by ID (exact) or by name (vector search)."""
     import src.graph.nodes as nodes
     repo = nodes._cte_repo
     if not repo:
@@ -223,27 +226,131 @@ async def search_cte(q: str = "", limit: int = 10):
     if not query:
         return {"results": []}
 
-    # Exact ID match only
+    results: list[CTESearchResultItem] = []
+
+    # 1. Exact ID match
     try:
         cte_id = int(query)
         item = repo.get_item_by_id(cte_id)
         if item:
-            return {"results": [_cte_to_dict(item)]}
+            results.append(_cte_to_search_item(item))
     except ValueError:
         pass
 
-    return {"results": []}
+    # 2. Vector search for text queries (or if ID not found)
+    if not results:
+        embedder = nodes._embedder
+        if not embedder:
+            raise HTTPException(status_code=503, detail="Embedder not initialized")
+        try:
+            vector = embedder.encode_single(query)
+            hits = repo.search(query_vector=vector, limit=limit, score_threshold=0.3)
+            for h in hits:
+                results.append(CTESearchResultItem(
+                    id=h["cte_id"],
+                    name=h.get("name", ""),
+                    category=h.get("category", ""),
+                    manufacturer=h.get("manufacturer", ""),
+                    characteristics=[[k, v] for k, v in h.get("attributes", {}).items()],
+                    cosine_score=h.get("cosine_score"),
+                ))
+        except Exception as e:
+            logger.warning("Vector search failed: %s", e)
+
+    # 3. Enrich with contract stats
+    if results:
+        from src.data_access.contract_repo import ContractRepository
+        cte_ids = [r.id for r in results]
+        stats_map = ContractRepository.get_analog_stats(cte_ids)
+        for r in results:
+            stats = stats_map.get(r.id, {})
+            r.contract_count = stats.get("contract_count", 0)
+            r.regions = stats.get("regions", [])
+            r.unique_suppliers = stats.get("unique_suppliers", 0)
+
+    return {"results": [r.model_dump() for r in results]}
 
 
-def _cte_to_dict(item: dict) -> dict:
+def _cte_to_search_item(item: dict) -> CTESearchResultItem:
     attrs = item.get("_attributes", {})
-    return {
-        "id": item["Идентификатор СТЕ"],
-        "name": item["Наименование СТЕ"],
-        "category": item.get("Категория", ""),
-        "manufacturer": item.get("Производитель", ""),
-        "characteristics": [[k, v] for k, v in attrs.items()],
-    }
+    return CTESearchResultItem(
+        id=item["Идентификатор СТЕ"],
+        name=item["Наименование СТЕ"],
+        category=item.get("Категория", ""),
+        manufacturer=item.get("Производитель", ""),
+        characteristics=[[k, v] for k, v in attrs.items()],
+    )
+
+
+@router.get("/cte/{cte_id}/prices", response_model=CTEPriceAnalytics)
+async def get_cte_prices(cte_id: int, region: str | None = None, months: int = 12):
+    """Price analytics for a specific CTE without session."""
+    import src.graph.nodes as nodes
+    from src.data_access.contract_repo import ContractRepository
+
+    repo = nodes._cte_repo
+    if not repo:
+        raise HTTPException(status_code=503, detail="CTE repo not initialized")
+
+    item = repo.get_item_by_id(cte_id)
+    if not item:
+        raise HTTPException(status_code=404, detail="CTE not found")
+
+    cte_name = item["Наименование СТЕ"]
+
+    # Get prices
+    df = ContractRepository.get_prices_for_ctes([cte_id], region=region, months_back=months)
+    prices: list[CTEPriceInfo] = []
+    avg_price = 0.0
+    median_price = 0.0
+    min_price = 0.0
+    max_price = 0.0
+
+    if len(df) > 0:
+        for row in df.iter_rows(named=True):
+            date_val = row.get("Дата заключения контракта", "")
+            if hasattr(date_val, "isoformat"):
+                date_val = date_val.isoformat()
+            prices.append(CTEPriceInfo(
+                date=str(date_val) if date_val else "",
+                price=row.get("Цена за единицу", 0) or 0,
+                quantity=row.get("Количество", 1) or 1,
+                unit=row.get("Единица измерения", "") or "",
+                region=row.get("Регион заказчика", "") or "",
+                supplier_inn=row.get("ИНН поставщика", 0) or 0,
+                contract_id=row.get("Идентификатор контракта", 0) or 0,
+                procurement_method=row.get("Способ закупки", "") or "",
+            ))
+
+        price_vals = [p.price for p in prices if p.price > 0]
+        if price_vals:
+            avg_price = sum(price_vals) / len(price_vals)
+            sorted_prices = sorted(price_vals)
+            n = len(sorted_prices)
+            median_price = (sorted_prices[n // 2] + sorted_prices[(n - 1) // 2]) / 2
+            min_price = sorted_prices[0]
+            max_price = sorted_prices[-1]
+
+    # Region stats
+    raw_region_stats = ContractRepository.get_region_price_stats([cte_id], months_back=months)
+    region_stats = [RegionPriceStat(**s) for s in raw_region_stats]
+
+    # Units
+    units_map = ContractRepository.get_units_by_cte([cte_id])
+    available_units = units_map.get(cte_id, [])
+
+    return CTEPriceAnalytics(
+        cte_id=cte_id,
+        cte_name=cte_name,
+        prices=prices,
+        avg_price=avg_price,
+        median_price=median_price,
+        min_price=min_price,
+        max_price=max_price,
+        total_contracts=len(prices),
+        region_stats=region_stats,
+        available_units=available_units,
+    )
 
 
 @router.post("/session/{session_id}/analogs/approve", response_model=SessionStatus)
