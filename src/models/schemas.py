@@ -7,6 +7,7 @@ from typing import Any
 
 class SessionStartRequest(BaseModel):
     cte_name: str = Field(..., description="Name of the CTE item to search for")
+    cte_id: int | None = Field(None, description="Optional CTE ID to target directly")
     category: str | None = Field(None, description="Category filter for hybrid search")
     region: str | None = Field(None, description="Region filter for price lookup")
     quantity: float = Field(1.0, gt=0, description="Required quantity")

@@ -64,33 +64,70 @@ async def start_session(request: SessionStartRequest):
     session_id = str(uuid.uuid4())[:8]
     config = _get_config(session_id)
 
+    # Prepare initial state
+    target_cte_name = request.cte_name
+    target_category = request.category
+    user_approved_analogs = []
+    current_step = "init"
+
+    is_known_cte = False
+
+    # If cte_id is provided, bypass search and go straight to price processing
+    if request.cte_id:
+        import src.graph.nodes as nodes
+        item = nodes._cte_repo.get_item_by_id(request.cte_id)
+        if item:
+            logger.info("Session %s: direct start with CTE ID %d", session_id, request.cte_id)
+            is_known_cte = True
+            user_approved_analogs = [{
+                "cte_id": item["Идентификатор СТЕ"],
+                "name": item["Наименование СТЕ"],
+                "category": item.get("Категория", ""),
+                "manufacturer": item.get("Производитель", ""),
+                "attributes": item.get("_attributes", {}),
+                "cosine_score": 1.0,  # Max score as it's an exact match
+                "attribute_overlap": 1.0,
+                "final_score": 1.0,
+                "match_reason": "Выбрано пользователем напрямую",
+            }]
+            # Update names if they were generic/empty
+            if not target_cte_name or target_cte_name == "Search":
+                target_cte_name = item["Наименование СТЕ"]
+            if not target_category:
+                target_category = item.get("Категория")
+            current_step = "analogs_approved"
+        else:
+            logger.warning("Session %s: CTE ID %d not found, falling back to search", session_id, request.cte_id)
+
     initial_state = {
         "session_id": session_id,
-        "target_cte_name": request.cte_name,
-        "target_category": request.category,
+        "target_cte_name": target_cte_name,
+        "target_category": target_category,
         "region_filter": request.region,
         "quantity": request.quantity,
         "inflation_coefficient": 1.0,
         "retrieved_analogs": [],
-        "user_approved_analogs": [],
+        "user_approved_analogs": user_approved_analogs,
         "raw_prices": [],
         "filtered_prices": [],
         "outlier_prices": [],
         "user_approved_prices": [],
         "justification": [],
-        "current_step": "init",
+        "current_step": current_step,
+        "is_known_cte": is_known_cte,
         "error": None,
     }
 
     logger.info(
-        "Starting session %s for '%s' (category=%s, region=%s)",
+        "Starting session %s for '%s' (category=%s, region=%s, cte_id=%s)",
         session_id,
-        request.cte_name,
-        request.category,
+        target_cte_name,
+        target_category,
         request.region,
+        request.cte_id,
     )
 
-    # Invoke graph — will run search_analogs and hit the interrupt
+    # Invoke graph — will run search_analogs OR skip to process_prices if user_approved_analogs is set
     result = _graph.invoke(initial_state, config)
 
     # Track in history if purchase_id provided
@@ -99,9 +136,9 @@ async def start_session(request: SessionStartRequest):
             HistoryRepository.create_calculation(
                 purchase_id=request.purchase_id,
                 session_id=session_id,
-                cte_name=request.cte_name,
-                cte_category=request.category or "",
-                cte_id=0,
+                cte_name=target_cte_name,
+                cte_category=target_category or "",
+                cte_id=request.cte_id or 0,
             )
         except Exception as e:
             logger.warning("Failed to save calculation to history: %s", e)

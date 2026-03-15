@@ -45,4 +45,5 @@ class PipelineState(TypedDict, total=False):
 
     # Meta
     current_step: str
+    is_known_cte: bool
     error: str | None

@@ -40,6 +40,11 @@ def perform_search(state: PipelineState) -> PipelineState:
     target_name = state["target_cte_name"]
     category = state.get("target_category")
 
+    # Bypass if known CTE provided (skip vector search)
+    if state.get("is_known_cte"):
+        logger.info("Known CTE provided, skipping vector search for '%s'", target_name)
+        return state
+
     logger.info("Searching analogs for: '%s' (category=%s)", target_name, category)
 
     # Embed the query
@@ -92,6 +97,11 @@ def wait_for_analogs(state: PipelineState) -> PipelineState:
     """Dedicated node for human-in-the-loop analog approval."""
 
     ranked = state.get("retrieved_analogs", [])
+
+    # This node should not be reached if is_known_cte is True due to conditional edge,
+    # but we keep a safeguard check.
+    if state.get("is_known_cte"):
+        return state
 
     # Interrupt for user to review analogs
     user_decision = interrupt({
@@ -365,6 +375,13 @@ def generate_document_node(state: PipelineState) -> PipelineState:
     return state
 
 
+def route_after_search(state: PipelineState):
+    """Route to price processing if CTE is known, otherwise wait for user approval."""
+    if state.get("is_known_cte"):
+        return "known"
+    return "unknown"
+
+
 # ── Graph Builder ──
 
 
@@ -379,7 +396,17 @@ def build_graph(checkpointer=None):
     builder.add_node("generate_document", generate_document_node)
 
     builder.add_edge(START, "perform_search")
-    builder.add_edge("perform_search", "wait_for_analogs")
+    
+    # Conditional transition: if known CTE, skip to price processing
+    builder.add_conditional_edges(
+        "perform_search",
+        route_after_search,
+        {
+            "known": "process_prices",
+            "unknown": "wait_for_analogs"
+        }
+    )
+    
     builder.add_edge("wait_for_analogs", "process_prices")
     builder.add_edge("process_prices", "calculate_nmcc")
     builder.add_edge("calculate_nmcc", "generate_document")
