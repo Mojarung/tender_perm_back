@@ -7,10 +7,9 @@ logger = logging.getLogger(__name__)
 class Embedder:
     def __init__(self, model_name: str = "perplexity-ai/pplx-embed-v1-0.6b"):
         logger.info("Initializing Local Perplexity Embedder: %s", model_name)
-        self.api_key = "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"
-        self.base_url = "https://integrate.api.nvidia.com/v1"
-        self.client = OpenAI(api_key=self.api_key, base_url=self.base_url)
-        self.model = "nvidia/llama-nemotron-embed-1b-v2"
+        self.api_key = "nv-rKE_U0BYzVqFRy4ihnTkaH3w8zdoMP9hhyMh-DkLXWEZ3FloOlmDcdBp-pPQcpmn"
+        self.base_url = "localhost:8333/v1"
+        self.model = model_name
         logger.info("Local Perplexity Embedder ready (dim=1024)")
 
     def encode(self, texts: list[str]) -> np.ndarray:
