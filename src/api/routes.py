@@ -191,8 +191,8 @@ async def get_analogs(session_id: str):
                 unique_suppliers=stats.get("unique_suppliers", 0),
             ))
 
-        # Sort: analogs with recent contracts first, then by score
-        analogs.sort(key=lambda a: (a.contract_count > 0, a.contract_count, a.final_score), reverse=True)
+        # Sort by final_score descending
+        analogs.sort(key=lambda a: a.final_score, reverse=True)
 
         return SearchResponse(
             session_id=session_id,
