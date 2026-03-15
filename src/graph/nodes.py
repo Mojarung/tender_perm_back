@@ -143,10 +143,11 @@ def process_prices(state: PipelineState) -> PipelineState:
     5. Interrupt for user to review prices
     """
     approved_analogs = state.get("user_approved_analogs", [])
+    manual_from_analogs = state.get("manual_prices_from_analogs", [])
     region = state.get("region_filter")
 
-    if not approved_analogs:
-        state["error"] = "Нет одобренных аналогов"
+    if not approved_analogs and not manual_from_analogs:
+        state["error"] = "Нет одобренных аналогов или ручных цен"
         state["current_step"] = "error"
         return state
 
@@ -158,34 +159,28 @@ def process_prices(state: PipelineState) -> PipelineState:
     # Get prices from contracts — with fallback tracking
     search_scope = "region"
     search_months = settings.price_months_back
+    prices_df = pl.DataFrame(schema=ContractRepository._df.schema) if ContractRepository._df is not None else pl.DataFrame()
 
-    prices_df = ContractRepository.get_prices_for_ctes(
-        cte_ids=cte_ids,
-        region=region,
-        months_back=settings.price_months_back,
-        units=units,
-    )
-
-    if prices_df.height == 0 and region:
-        logger.warning("No prices found, trying without region filter")
-        search_scope = "all_regions"
+    if cte_ids:
         prices_df = ContractRepository.get_prices_for_ctes(
             cte_ids=cte_ids,
-            region=None,
+            region=region,
             months_back=settings.price_months_back,
             units=units,
         )
 
-    if prices_df.height == 0:
-        logger.warning("Still no prices found, extending date range to 24 months")
-        search_scope = "all_regions_extended"
-        search_months = 24
-        prices_df = ContractRepository.get_prices_for_ctes(
-            cte_ids=cte_ids,
-            region=None,
-            months_back=24,
-            units=units,
-        )
+        if prices_df.height == 0 and region:
+            logger.warning("No prices found, trying without region filter")
+            search_scope = "all_regions"
+            prices_df = ContractRepository.get_prices_for_ctes(
+                cte_ids=cte_ids,
+                region=None,
+                months_back=settings.price_months_back,
+                units=units,
+            )
+    else:
+        search_scope = "manual_only"
+        search_months = 0
 
     state["price_search_info"] = {
         "requested_region": region or "",
@@ -221,6 +216,24 @@ def process_prices(state: PipelineState) -> PipelineState:
             "time_weight": 1.0,
             "_source": "manual",
         })
+
+    # Re-calculate statistics including manual prices for the UI
+    if analysis.valid_prices:
+        all_prices = [p["Цена за единицу"] for p in analysis.valid_prices]
+        all_weights = [p.get("time_weight", 1.0) for p in analysis.valid_prices]
+        
+        valid_df = pl.DataFrame(analysis.valid_prices)
+        analysis.median = float(valid_df.select(pl.col("Цена за единицу").median()).item() or 0)
+        analysis.mean = float(valid_df.select(pl.col("Цена за единицу").mean()).item() or 0)
+        std_val = float(valid_df.select(pl.col("Цена за единицу").std()).item() or 0)
+        
+        analysis.coefficient_of_variation = (std_val / analysis.mean * 100) if analysis.mean > 0 else 0.0
+        analysis.is_homogeneous = analysis.coefficient_of_variation <= settings.max_coefficient_of_variation
+        
+        # Weighted average
+        weighted_sum = sum(p * w for p, w in zip(all_prices, all_weights))
+        weight_sum = sum(all_weights)
+        analysis.weighted_average = weighted_sum / weight_sum if weight_sum > 0 else analysis.mean
 
     state["filtered_prices"] = analysis.valid_prices
     state["outlier_prices"] = analysis.outlier_prices

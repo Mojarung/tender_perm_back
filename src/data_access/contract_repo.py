@@ -84,11 +84,8 @@ class ContractRepository:
         if cls._df is None:
             raise ValueError("Contract data not loaded. Call load_data() first.")
 
-        cutoff = datetime.now() - timedelta(days=months_back * 30)
-
         query = cls._df.filter(
             pl.col("Идентификатор СТЕ по контракту").is_in(cte_ids)
-            & (pl.col("Дата заключения контракта") >= cutoff)
         )
 
         if region:
@@ -113,9 +110,9 @@ class ContractRepository:
         now = datetime.now()
         return df.with_columns(
             (
-                1.0
+                pl.lit(1.0)
                 / (
-                    1.0
+                    pl.lit(1.0)
                     + (
                         (pl.lit(now) - pl.col("Дата заключения контракта")).dt.total_days()
                         / 365.0
@@ -130,11 +127,8 @@ class ContractRepository:
         if cls._df is None or not cte_ids:
             return {}
 
-        cutoff = datetime.now() - timedelta(days=months_back * 30)
-
         df = cls._df.filter(
             pl.col("Идентификатор СТЕ по контракту").is_in(cte_ids)
-            & (pl.col("Дата заключения контракта") >= cutoff)
         )
 
         if df.height == 0:
@@ -164,11 +158,8 @@ class ContractRepository:
         if cls._df is None or not cte_ids:
             return []
 
-        cutoff = datetime.now() - timedelta(days=months_back * 30)
-
         df = cls._df.filter(
             pl.col("Идентификатор СТЕ по контракту").is_in(cte_ids)
-            & (pl.col("Дата заключения контракта") >= cutoff)
             & (pl.col("Цена за единицу") > 0)
         )
 
