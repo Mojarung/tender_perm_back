@@ -19,7 +19,16 @@ from src.models.schemas import (
     SessionStatus,
     AnalogResult,
     PriceResult,
+    CreatePurchaseRequest,
+    CreatePurchaseResponse,
+    PurchaseListResponse,
+    PurchaseSummary,
+    CalculationSummary,
+    ItemSummary,
+    PurchaseSummaryBoard,
 )
+from src.data_access.history_repo import HistoryRepository
+from src.services.num_to_words_ru import number_to_words_ru
 
 logger = logging.getLogger(__name__)
 
@@ -78,6 +87,19 @@ async def start_session(request: SessionStartRequest):
 
     # Invoke graph — will run search_analogs and hit the interrupt
     result = _graph.invoke(initial_state, config)
+
+    # Track in history if purchase_id provided
+    if request.purchase_id:
+        try:
+            HistoryRepository.create_calculation(
+                purchase_id=request.purchase_id,
+                session_id=session_id,
+                cte_name=request.cte_name,
+                cte_category=request.category or "",
+                cte_id=0,
+            )
+        except Exception as e:
+            logger.warning("Failed to save calculation to history: %s", e)
 
     # Check for interrupt (analog approval)
     interrupts = result.get("__interrupt__", [])
@@ -210,6 +232,17 @@ async def approve_analogs(session_id: str, request: AnalogApprovalRequest):
     )
 
     result = _graph.invoke(Command(resume=resume_data), config)
+
+    # Save decisions to history
+    try:
+        HistoryRepository.save_decisions(session_id, {
+            "approved_analog_ids": request.approved_analog_ids,
+            "manual_cte_ids": request.manual_cte_ids,
+            "selected_units": request.units or [],
+        })
+        HistoryRepository.update_step(session_id, "analogs_approved")
+    except Exception as e:
+        logger.warning("Failed to save analog decisions to history: %s", e)
 
     interrupts = result.get("__interrupt__", [])
     if interrupts:
@@ -379,6 +412,32 @@ async def approve_prices(session_id: str, request: PriceApprovalRequest):
 
     result = _graph.invoke(Command(resume=resume_data), config)
 
+    # Save decisions and complete calculation in history
+    try:
+        HistoryRepository.save_decisions(session_id, {
+            "approved_price_indices": request.approved_price_indices,
+        })
+        step = result.get("current_step", "")
+        if step == "document_generated":
+            state = _graph.get_state(config)
+            vals = state.values
+            HistoryRepository.complete_calculation(session_id, {
+                "nmck_per_unit": vals.get("nmck_per_unit"),
+                "total_nmck": vals.get("total_nmck"),
+                "coefficient_of_variation": vals.get("coefficient_of_variation"),
+                "is_homogeneous": vals.get("is_homogeneous"),
+                "median_price": vals.get("median_price"),
+                "weighted_average_price": vals.get("weighted_average_price"),
+                "price_range_min": vals.get("price_range_min"),
+                "price_range_max": vals.get("price_range_max"),
+                "num_prices_used": len(vals.get("user_approved_prices", [])),
+                "document_path": vals.get("document_path"),
+            })
+        else:
+            HistoryRepository.update_step(session_id, step)
+    except Exception as e:
+        logger.warning("Failed to save price decisions to history: %s", e)
+
     return SessionStatus(
         session_id=session_id,
         current_step=result.get("current_step", "document_generated"),
@@ -485,3 +544,216 @@ async def recalculate(session_id: str, request: RecalculateRequest):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ── History ──
+
+
+def _purchase_to_model(p: dict) -> PurchaseSummary:
+    calcs = [
+        CalculationSummary(
+            id=c["id"],
+            session_id=c["session_id"],
+            cte_name=c["cte_name"],
+            cte_category=c.get("cte_category", ""),
+            cte_id=c.get("cte_id", 0),
+            status=c["status"],
+            current_step=c.get("current_step", ""),
+            nmck_per_unit=c.get("nmck_per_unit"),
+            total_nmck=c.get("total_nmck"),
+            coefficient_of_variation=c.get("coefficient_of_variation"),
+            is_homogeneous=c.get("is_homogeneous"),
+            num_prices_used=c.get("num_prices_used"),
+            document_path=c.get("document_path"),
+            approved_analog_ids=c.get("approved_analog_ids", []),
+            selected_units=c.get("selected_units", []),
+            created_at=c.get("created_at", ""),
+            completed_at=c.get("completed_at"),
+        )
+        for c in p.get("calculations", [])
+    ]
+    return PurchaseSummary(
+        id=p["id"],
+        created_at=p.get("created_at", ""),
+        region=p.get("region", ""),
+        status=p.get("status", "in_progress"),
+        total_nmck=p.get("total_nmck", 0),
+        items_count=p.get("items_count", 0),
+        completed_count=p.get("completed_count", 0),
+        calculations=calcs,
+    )
+
+
+@router.post("/history", response_model=CreatePurchaseResponse)
+async def create_purchase(request: CreatePurchaseRequest):
+    """Create a new purchase record for tracking calculation history."""
+    pid = HistoryRepository.create_purchase(
+        region=request.region,
+        items_count=len(request.items),
+    )
+    return CreatePurchaseResponse(purchase_id=pid)
+
+
+@router.get("/history", response_model=PurchaseListResponse)
+async def list_purchases(limit: int = 50, offset: int = 0, status: str | None = None):
+    """List purchases with their calculations."""
+    purchases, total = HistoryRepository.list_purchases(limit, offset, status)
+    return PurchaseListResponse(
+        purchases=[_purchase_to_model(p) for p in purchases],
+        total=total,
+    )
+
+
+@router.get("/history/recent", response_model=PurchaseListResponse)
+async def recent_purchases(limit: int = 3):
+    """Get recent purchases for the create page."""
+    purchases = HistoryRepository.get_recent(limit)
+    return PurchaseListResponse(
+        purchases=[_purchase_to_model(p) for p in purchases],
+        total=len(purchases),
+    )
+
+
+@router.get("/history/{purchase_id}", response_model=PurchaseSummary)
+async def get_purchase(purchase_id: int):
+    """Get a single purchase with calculations."""
+    p = HistoryRepository.get_purchase(purchase_id)
+    if not p:
+        raise HTTPException(status_code=404, detail="Purchase not found")
+    return _purchase_to_model(p)
+
+
+@router.delete("/history/{purchase_id}")
+async def delete_purchase(purchase_id: int):
+    """Delete a purchase and its calculations."""
+    deleted = HistoryRepository.delete_purchase(purchase_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Purchase not found")
+    return {"ok": True}
+
+
+# ── Purchase Summary & Consolidated Document ──
+
+
+@router.get("/purchase/{purchase_id}/summary", response_model=PurchaseSummaryBoard)
+async def get_purchase_summary(purchase_id: int):
+    """Aggregated summary board for a completed purchase."""
+    p = HistoryRepository.get_purchase(purchase_id)
+    if not p:
+        raise HTTPException(status_code=404, detail="Purchase not found")
+
+    calcs = p.get("calculations", [])
+    completed = [c for c in calcs if c["status"] == "completed"]
+
+    items: list[ItemSummary] = []
+    for c in completed:
+        # Get quantity/unit from LangGraph state
+        qty = 1.0
+        unit = None
+        try:
+            config = _get_config(c["session_id"])
+            state = _graph.get_state(config)
+            vals = state.values
+            qty = vals.get("quantity", 1.0)
+            unit_val = vals.get("unit_filter")
+            if isinstance(unit_val, list) and unit_val:
+                unit = unit_val[0]
+            elif isinstance(unit_val, str):
+                unit = unit_val
+        except Exception:
+            pass
+
+        items.append(ItemSummary(
+            session_id=c["session_id"],
+            cte_name=c["cte_name"],
+            quantity=qty,
+            unit=unit,
+            nmck_per_unit=c.get("nmck_per_unit") or 0,
+            total_nmck=c.get("total_nmck") or 0,
+            coefficient_of_variation=c.get("coefficient_of_variation") or 0,
+            is_homogeneous=bool(c.get("is_homogeneous")),
+            num_prices_used=c.get("num_prices_used") or 0,
+            median_price=c.get("median_price") or 0,
+            weighted_average_price=c.get("weighted_average_price") or 0,
+        ))
+
+    grand_total = sum(it.total_nmck for it in items)
+    cvs = [it.coefficient_of_variation for it in items if it.coefficient_of_variation > 0]
+
+    return PurchaseSummaryBoard(
+        purchase_id=purchase_id,
+        region=p.get("region", ""),
+        items_count=p.get("items_count", 0),
+        completed_count=len(completed),
+        grand_total_nmck=grand_total,
+        grand_total_nmck_words=number_to_words_ru(grand_total),
+        items=items,
+        any_non_homogeneous=any(not it.is_homogeneous for it in items),
+        average_cv=sum(cvs) / len(cvs) if cvs else 0,
+    )
+
+
+@router.get("/purchase/{purchase_id}/consolidated-document")
+async def get_consolidated_document(purchase_id: int):
+    """Generate and return a single .docx covering all items in a purchase."""
+    p = HistoryRepository.get_purchase(purchase_id)
+    if not p:
+        raise HTTPException(status_code=404, detail="Purchase not found")
+
+    calcs = [c for c in p.get("calculations", []) if c["status"] == "completed"]
+    if not calcs:
+        raise HTTPException(status_code=400, detail="No completed calculations")
+
+    # Collect full state for each item from LangGraph
+    doc_items = []
+    for c in calcs:
+        config = _get_config(c["session_id"])
+        try:
+            state = _graph.get_state(config)
+            vals = state.values
+        except Exception as e:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Cannot retrieve state for session {c['session_id']}: {e}",
+            )
+
+        unit_val = vals.get("unit_filter")
+        unit = None
+        if isinstance(unit_val, list) and unit_val:
+            unit = unit_val[0]
+        elif isinstance(unit_val, str):
+            unit = unit_val
+
+        doc_items.append({
+            "target_name": vals.get("target_cte_name", c["cte_name"]),
+            "analogs": vals.get("user_approved_analogs", []),
+            "prices": vals.get("user_approved_prices", []),
+            "outliers": vals.get("outlier_prices", []),
+            "calculation": {
+                "weighted_average_price": vals.get("weighted_average_price", 0),
+                "median_price": vals.get("median_price", 0),
+                "coefficient_of_variation": vals.get("coefficient_of_variation", 0),
+                "is_homogeneous": vals.get("is_homogeneous", True),
+                "nmck_per_unit": vals.get("nmck_per_unit", 0),
+                "total_nmck": vals.get("total_nmck", 0),
+            },
+            "quantity": vals.get("quantity", 1.0),
+            "unit": unit,
+            "justification": vals.get("justification", []),
+        })
+
+    from src.services.document_service import generate_consolidated_document
+    from src.config import settings
+
+    doc_path = generate_consolidated_document(
+        output_dir=settings.output_dir,
+        purchase_id=purchase_id,
+        region=p.get("region"),
+        items=doc_items,
+    )
+
+    return FileResponse(
+        path=doc_path,
+        filename=f"nmck_consolidated_{purchase_id}.docx",
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    )

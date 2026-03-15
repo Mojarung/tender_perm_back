@@ -2,16 +2,19 @@
 
 import logging
 import os
+import sqlite3
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from qdrant_client import QdrantClient
+from langgraph.checkpoint.sqlite import SqliteSaver
 
 from src.config import settings
 from src.data_access.contract_repo import ContractRepository
 from src.data_access.cte_repo import CTERepository
+from src.data_access.history_repo import HistoryRepository
 from src.ml.embedder import Embedder
 from src.graph.nodes import build_graph, set_dependencies
 from src.api.routes import router, set_graph
@@ -65,13 +68,22 @@ async def lifespan(app: FastAPI):
     cte_repo.upsert_items(embedder)
 
     # 4. Load contracts
-    logger.info("Step 4/5: Loading contracts ...")
+    logger.info("Step 4/6: Loading contracts ...")
     ContractRepository.load_data(settings.contracts_path)
 
-    # 5. Build graph
-    logger.info("Step 5/5: Building LangGraph pipeline ...")
+    # 5. Initialize history DB
+    logger.info("Step 5/6: Initializing history ...")
+    HistoryRepository.init(settings.output_dir / "history.db")
+
+    # 6. Build graph with persistent SqliteSaver
+    logger.info("Step 6/6: Building LangGraph pipeline ...")
     set_dependencies(embedder, cte_repo)
-    graph = build_graph()
+    lg_conn = sqlite3.connect(
+        str(settings.output_dir / "langgraph_checkpoints.db"),
+        check_same_thread=False,
+    )
+    checkpointer = SqliteSaver(lg_conn)
+    graph = build_graph(checkpointer=checkpointer)
     set_graph(graph)
 
     # Store refs on app for potential direct access
@@ -88,6 +100,7 @@ async def lifespan(app: FastAPI):
 
     # Shutdown
     logger.info("Shutting down ...")
+    lg_conn.close()
     qdrant_client.close()
 
 
