@@ -10,6 +10,7 @@ class SessionStartRequest(BaseModel):
     category: str | None = Field(None, description="Category filter for hybrid search")
     region: str | None = Field(None, description="Region filter for price lookup")
     quantity: float = Field(1.0, gt=0, description="Required quantity")
+    purchase_id: int | None = Field(None, description="Associated purchase ID for history tracking")
 
 
 class AnalogApprovalRequest(BaseModel):
@@ -150,3 +151,77 @@ class RegionPricesResponse(BaseModel):
 class DocumentResponse(BaseModel):
     session_id: str
     document_path: str
+
+
+# ── History models ─────────────────────────────────────────────────
+
+
+class CalculationSummary(BaseModel):
+    id: int
+    session_id: str
+    cte_name: str
+    cte_category: str
+    cte_id: int
+    status: str
+    current_step: str
+    nmck_per_unit: float | None = None
+    total_nmck: float | None = None
+    coefficient_of_variation: float | None = None
+    is_homogeneous: bool | None = None
+    num_prices_used: int | None = None
+    document_path: str | None = None
+    approved_analog_ids: list[int] = []
+    selected_units: list[str] = []
+    created_at: str
+    completed_at: str | None = None
+
+
+class PurchaseSummary(BaseModel):
+    id: int
+    created_at: str
+    region: str
+    status: str
+    total_nmck: float
+    items_count: int
+    completed_count: int
+    calculations: list[CalculationSummary]
+
+
+class PurchaseListResponse(BaseModel):
+    purchases: list[PurchaseSummary]
+    total: int
+
+
+class CreatePurchaseRequest(BaseModel):
+    region: str = ""
+    items: list[dict]
+
+
+class CreatePurchaseResponse(BaseModel):
+    purchase_id: int
+
+
+class ItemSummary(BaseModel):
+    session_id: str
+    cte_name: str
+    quantity: float
+    unit: str | None = None
+    nmck_per_unit: float
+    total_nmck: float
+    coefficient_of_variation: float
+    is_homogeneous: bool
+    num_prices_used: int
+    median_price: float
+    weighted_average_price: float
+
+
+class PurchaseSummaryBoard(BaseModel):
+    purchase_id: int
+    region: str
+    items_count: int
+    completed_count: int
+    grand_total_nmck: float
+    grand_total_nmck_words: str
+    items: list[ItemSummary]
+    any_non_homogeneous: bool
+    average_cv: float

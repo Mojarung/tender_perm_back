@@ -355,7 +355,7 @@ def generate_document_node(state: PipelineState) -> PipelineState:
 # ── Graph Builder ──
 
 
-def build_graph():
+def build_graph(checkpointer=None):
     """Build and compile the LangGraph state machine."""
     builder = StateGraph(PipelineState)
 
@@ -372,8 +372,10 @@ def build_graph():
     builder.add_edge("calculate_nmcc", "generate_document")
     builder.add_edge("generate_document", END)
 
-    checkpointer = InMemorySaver()
+    if checkpointer is None:
+        checkpointer = InMemorySaver()
+
     graph = builder.compile(checkpointer=checkpointer)
 
-    logger.info("LangGraph pipeline compiled with %d nodes", 4)
+    logger.info("LangGraph pipeline compiled with %d nodes", 5)
     return graph
