@@ -187,6 +187,41 @@ async def check_cte(cte_id: int):
     return {"exists": False, "name": None}
 
 
+@router.get("/cte/search")
+async def search_cte(q: str = "", limit: int = 10):
+    """Search CTE catalog by ID (exact) or by name/category (substring + vector)."""
+    import src.graph.nodes as nodes
+    repo = nodes._cte_repo
+    if not repo:
+        raise HTTPException(status_code=503, detail="CTE repo not initialized")
+
+    query = q.strip()
+    if not query:
+        return {"results": []}
+
+    # Exact ID match only
+    try:
+        cte_id = int(query)
+        item = repo.get_item_by_id(cte_id)
+        if item:
+            return {"results": [_cte_to_dict(item)]}
+    except ValueError:
+        pass
+
+    return {"results": []}
+
+
+def _cte_to_dict(item: dict) -> dict:
+    attrs = item.get("_attributes", {})
+    return {
+        "id": item["Идентификатор СТЕ"],
+        "name": item["Наименование СТЕ"],
+        "category": item.get("Категория", ""),
+        "manufacturer": item.get("Производитель", ""),
+        "characteristics": [[k, v] for k, v in attrs.items()],
+    }
+
+
 @router.post("/session/{session_id}/analogs/approve", response_model=SessionStatus)
 async def approve_analogs(session_id: str, request: AnalogApprovalRequest):
     """
