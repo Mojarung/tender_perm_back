@@ -14,6 +14,8 @@ from src.models.schemas import (
     PriceApprovalRequest,
     PricesResponse,
     RecalculateRequest,
+    RegionPricesResponse,
+    RegionPriceStat,
     SearchResponse,
     SessionStartRequest,
     SessionStatus,
@@ -389,6 +391,52 @@ async def get_prices(session_id: str):
         )
     except Exception as e:
         logger.error("Error in get_prices for session %s: %s", session_id, e, exc_info=True)
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@router.get("/session/{session_id}/region-prices", response_model=RegionPricesResponse)
+async def get_region_prices(session_id: str):
+    """Get average prices aggregated by region for the heatmap."""
+    config = _get_config(session_id)
+    try:
+        state = _graph.get_state(config)
+        values = state.values
+
+        approved = values.get("user_approved_analogs", [])
+        if not approved:
+            approved = values.get("retrieved_analogs", [])
+
+        cte_ids = [a.get("cte_id", 0) for a in approved if a.get("cte_id")]
+        if not cte_ids:
+            return RegionPricesResponse(
+                session_id=session_id, stats=[], overall_avg=0, overall_min=0, overall_max=0
+            )
+
+        from src.data_access.contract_repo import ContractRepository
+
+        units = values.get("unit_filter")
+        raw_stats = ContractRepository.get_region_price_stats(cte_ids, units=units)
+
+        if not raw_stats:
+            return RegionPricesResponse(
+                session_id=session_id, stats=[], overall_avg=0, overall_min=0, overall_max=0
+            )
+
+        stats = [RegionPriceStat(**s) for s in raw_stats]
+        avg_prices = [s.avg_price for s in stats]
+        overall_avg = sum(avg_prices) / len(avg_prices)
+        overall_min = min(avg_prices)
+        overall_max = max(avg_prices)
+
+        return RegionPricesResponse(
+            session_id=session_id,
+            stats=stats,
+            overall_avg=overall_avg,
+            overall_min=overall_min,
+            overall_max=overall_max,
+        )
+    except Exception as e:
+        logger.error("Error in get_region_prices for session %s: %s", session_id, e, exc_info=True)
         raise HTTPException(status_code=404, detail=str(e))
 
 

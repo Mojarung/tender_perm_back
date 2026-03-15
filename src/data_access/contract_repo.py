@@ -157,6 +157,39 @@ class ContractRepository:
         return result
 
     @classmethod
+    def get_region_price_stats(
+        cls, cte_ids: list[int], months_back: int = 12, units: list[str] | None = None
+    ) -> list[dict]:
+        """Per-region price stats: avg, median, min, max, count, unique suppliers."""
+        if cls._df is None or not cte_ids:
+            return []
+
+        cutoff = datetime.now() - timedelta(days=months_back * 30)
+
+        df = cls._df.filter(
+            pl.col("Идентификатор СТЕ по контракту").is_in(cte_ids)
+            & (pl.col("Дата заключения контракта") >= cutoff)
+            & (pl.col("Цена за единицу") > 0)
+        )
+
+        if units and len(units) > 0:
+            df = df.filter(pl.col("Единица измерения").is_in(units))
+
+        if df.height == 0:
+            return []
+
+        grouped = df.group_by("Регион заказчика").agg(
+            pl.col("Цена за единицу").mean().alias("avg_price"),
+            pl.col("Цена за единицу").median().alias("median_price"),
+            pl.col("Цена за единицу").min().alias("min_price"),
+            pl.col("Цена за единицу").max().alias("max_price"),
+            pl.len().alias("contract_count"),
+            pl.col("ИНН поставщика").drop_nulls().n_unique().alias("unique_suppliers"),
+        )
+
+        return grouped.rename({"Регион заказчика": "region"}).to_dicts()
+
+    @classmethod
     def get_all_regions(cls) -> list[str]:
         """Return list of unique regions."""
         if cls._df is None:
