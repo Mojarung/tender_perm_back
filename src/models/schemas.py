@@ -129,6 +129,24 @@ class CalculationResponse(BaseModel):
     result: NMCKResult
 
 
+class RegionPriceStat(BaseModel):
+    region: str
+    avg_price: float
+    median_price: float
+    min_price: float
+    max_price: float
+    contract_count: int
+    unique_suppliers: int
+
+
+class RegionPricesResponse(BaseModel):
+    session_id: str
+    stats: list[RegionPriceStat]
+    overall_avg: float
+    overall_min: float
+    overall_max: float
+
+
 class DocumentResponse(BaseModel):
     session_id: str
     document_path: str

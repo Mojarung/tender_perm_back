@@ -50,8 +50,8 @@ async def lifespan(app: FastAPI):
         settings.qdrant_port,
     )
     qdrant_client = QdrantClient(
-        host=settings.qdrant_host,
-        port=settings.qdrant_port,
+        url="http://127.0.0.1:6334",
+        prefer_grpc=True,
     )
 
     # 3. Load CTE catalog and upsert to Qdrant
